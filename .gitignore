@@ -1,0 +1,11 @@
+# Secrets (CVAT personal access token)
+/login_info
+login_info.yaml
+
+# Large local artifacts (COCO trees, checkpoints, CVAT export zips)
+/data/datasets/*
+!/data/datasets/.gitkeep
+/data/work_dirs/*
+!/data/work_dirs/.gitkeep
+/data/exports/*
+!/data/exports/.gitkeep
