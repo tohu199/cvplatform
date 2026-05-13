@@ -1,12 +1,16 @@
 from pathlib import Path
-from pprint import pprint
-
-from cvat_sdk.api_client import Configuration, ApiClient, exceptions
-from cvat_sdk.api_client.models import *
 from typing import Dict
+
+from cvat_sdk import Client
+from cvat_sdk.core.proxies.types import Location
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _LOGIN_INFO_PATH = REPO_ROOT / "login_info.yaml"
+
+DEFAULT_CVAT_HOST = "http://localhost:8080"
+TASK_ID = 1
+FORMAT_NAME = "COCO 1.0"
+OUT = REPO_ROOT / "data" / "exports" / f"task_{TASK_ID}_coco.zip"
 
 
 def _load_login_yaml(path: Path) -> Dict[str, str]:
@@ -27,32 +31,18 @@ if not USERNAME or not PASSWORD:
     raise SystemExit(
         f"USERNAME and PASSWORD must be set in {_LOGIN_INFO_PATH} (one KEY:value per line)."
     )
+CVAT_HOST = (_creds.get("HOST") or "").strip() or DEFAULT_CVAT_HOST
 
-# Set up an API client
-# Read Configuration class docs for more info about parameters and authentication methods
-configuration = Configuration(
-    host="http://localhost:8080",
-    username=USERNAME,
-    password=PASSWORD,
-)
+OUT.parent.mkdir(parents=True, exist_ok=True)
 
-with ApiClient(configuration) as api_client:
-    format = "COCO 1.0" # str | Desired output format name You can get the list of supported formats at: /server/annotation/formats
-    id = 1 # int | A unique integer value identifying this task.
-    cloud_storage_id = 1 # int | Storage id (optional)
-    filename = "task_1_coco.zip" # str | Desired output file name (optional)
-    location = "local" # str | Where need to save downloaded dataset (optional)
-    save_images = True # bool | Include images or not (optional) if omitted the server will use the default value of False
+with Client(CVAT_HOST) as client:
+    client.login((USERNAME, PASSWORD))
+    task = client.tasks.retrieve(TASK_ID)
+    task.export_dataset(
+        format_name=FORMAT_NAME,
+        filename=OUT,
+        include_images=True,
+        location=Location.LOCAL,
+    )
 
-    try:
-        (data, response) = api_client.tasks_api.create_dataset_export(
-            format,
-            id,
-            cloud_storage_id=cloud_storage_id,
-            filename=filename,
-            location=location,
-            save_images=save_images,
-        )
-        pprint(data)
-    except exceptions.ApiException as e:
-        print("Exception when calling TasksApi.create_dataset_export(): %s\n" % e)
+print(OUT)
