@@ -9,3 +9,8 @@ login_info.yaml
 !/data/work_dirs/.gitkeep
 /data/exports/*
 !/data/exports/.gitkeep
+
+*.pyc
+
+.venv-webui/
+work_dirs/*
