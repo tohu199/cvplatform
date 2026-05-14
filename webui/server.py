@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -18,12 +19,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sdk.exportv2 import default_export_zip, run_export  # noqa: E402
+from webui.hub_page import hub_page_html  # noqa: E402
 from webui.nuclio_deploy import deploy_work_dir, list_deployable_work_dirs  # noqa: E402
 from webui.nuclio_deploy_page import NUCLIO_DEPLOY_PAGE_HTML  # noqa: E402
 from webui.train_manager import DEFAULT_CHART_METRICS, list_export_datasets, train_manager  # noqa: E402
 from webui.train_page import TRAIN_PAGE_HTML  # noqa: E402
 
-app = FastAPI(title="mmplatform webui", version="0.3.0")
+app = FastAPI(title="mmplatform webui", version="0.3.1")
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -49,6 +51,12 @@ class TrainStartRequest(BaseModel):
     )
 
 
+@app.get("/hub", response_class=HTMLResponse)
+def hub() -> str:
+    cvat = os.environ.get("MMPLATFORM_CVAT_UI_URL", "http://localhost:8080").strip()
+    return hub_page_html(cvat)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return """<!DOCTYPE html>
@@ -71,7 +79,7 @@ def index() -> str:
   </style>
 </head>
 <body>
-  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/">CVAT export</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/hub">統括</a> &middot; <a href="/">CVAT export</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
   <h1>CVAT COCO export</h1>
   <p class="muted">ZIP は <code>data/exports/task_{task-id}_{YYYY_MMDD_HHMM}.zip</code> を自動で使います。</p>
   <form id="f">
