@@ -18,15 +18,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sdk.exportv2 import default_export_zip, run_export  # noqa: E402
+from webui.nuclio_deploy import deploy_work_dir, list_deployable_work_dirs  # noqa: E402
+from webui.nuclio_deploy_page import NUCLIO_DEPLOY_PAGE_HTML  # noqa: E402
 from webui.train_manager import DEFAULT_CHART_METRICS, list_export_datasets, train_manager  # noqa: E402
 from webui.train_page import TRAIN_PAGE_HTML  # noqa: E402
 
-app = FastAPI(title="mmplatform webui", version="0.2.0")
+app = FastAPI(title="mmplatform webui", version="0.3.0")
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
 class ExportRequest(BaseModel):
     task_id: int = Field(..., ge=1, description="CVAT task id")
+
+
+class NuclioDeployRequest(BaseModel):
+    work_dir: str = Field(..., description="work_dirs 直下のフォルダ名（例: web_train_2026_0515_0016_0b4e73df）")
 
 
 class TrainStartRequest(BaseModel):
@@ -65,7 +71,7 @@ def index() -> str:
   </style>
 </head>
 <body>
-  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/">CVAT export</a> &middot; <a href="/train">YOLOX 学習</a></nav>
+  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/">CVAT export</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
   <h1>CVAT COCO export</h1>
   <p class="muted">ZIP は <code>data/exports/task_{task-id}_{YYYY_MMDD_HHMM}.zip</code> を自動で使います。</p>
   <form id="f">
@@ -157,6 +163,33 @@ async def api_export(body: ExportRequest) -> dict:
 @app.get("/train", response_class=HTMLResponse)
 def train_page() -> str:
     return TRAIN_PAGE_HTML
+
+
+@app.get("/nuclio-deploy", response_class=HTMLResponse)
+def nuclio_deploy_page() -> str:
+    return NUCLIO_DEPLOY_PAGE_HTML
+
+
+@app.get("/api/nuclio/work-dirs")
+def api_nuclio_work_dirs() -> dict:
+    return {"work_dirs": list_deployable_work_dirs()}
+
+
+@app.post("/api/nuclio/deploy")
+async def api_nuclio_deploy(body: NuclioDeployRequest) -> dict:
+    def _job():
+        return deploy_work_dir(body.work_dir.strip())
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(_executor, _job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"{exc!s}\n{tb}") from exc
 
 
 @app.get("/api/train/datasets")
