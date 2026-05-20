@@ -1,6 +1,6 @@
 [submodule "third_party/mmdetection"]
 	path = third_party/mmdetection
-	url = https://github.com/tohu199/mmdetection.git
+	url = git@github.com:tohu199/mmdetection.git
 [submodule "third_party/cvat"]
 	path = third_party/cvat
-	url = https://github.com/tohu199/cvat.git
+	url = git@github.com:tohu199/cvat.git
