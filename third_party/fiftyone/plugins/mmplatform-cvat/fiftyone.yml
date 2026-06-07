@@ -1,0 +1,21 @@
+name: "@mmplatform/cvat-kcenter"
+description: k-center greedy ordering and CVAT upload from the FiftyOne App
+tags:
+  - annotation
+  - cvat
+  - active-learning
+version: 0.1.0
+fiftyone:
+  version: ">=0.22"
+url: https://github.com/mmplatform/mmplatform/tree/main/third_party/fiftyone/plugins/mmplatform-cvat
+license: Apache 2.0
+operators:
+  - send_selected_to_cvat
+  - open_cvat_kcenter_panel
+panels:
+  - cvat_kcenter_panel
+secrets:
+  - FIFTYONE_CVAT_URL
+  - FIFTYONE_CVAT_USERNAME
+  - FIFTYONE_CVAT_PASSWORD
+  - FIFTYONE_CVAT_EMAIL

@@ -1,0 +1,52 @@
+{
+    "models": [
+        {
+            "base_name": "dino-vits16-torch",
+            "description": "DINO v1: ViT-S/16 self-supervised vision transformer",
+            "source": "https://github.com/facebookresearch/dino",
+            "default_deployment_config_dict": {
+                "type": "fiftyone.utils.torch.TorchImageModel",
+                "config": {
+                    "entrypoint_fcn": "fiftyone.utils.torch.load_torch_hub_raw_model",
+                    "entrypoint_args": {
+                        "repo_or_dir": "facebookresearch/dino",
+                        "model": "dino_vits16"
+                    },
+                    "image_patch_size": 16,
+                    "as_feature_extractor": true
+                }
+            },
+            "requirements": {
+                "packages": ["torch", "torchvision"],
+                "cpu": {"support": true},
+                "gpu": {"support": true}
+            },
+            "tags": ["embeddings", "torch", "dino", "dino-v1"],
+            "date_added": "2026-06-07 00:00:00"
+        },
+        {
+            "base_name": "dino-vitb16-torch",
+            "description": "DINO v1: ViT-B/16 self-supervised vision transformer",
+            "source": "https://github.com/facebookresearch/dino",
+            "default_deployment_config_dict": {
+                "type": "fiftyone.utils.torch.TorchImageModel",
+                "config": {
+                    "entrypoint_fcn": "fiftyone.utils.torch.load_torch_hub_raw_model",
+                    "entrypoint_args": {
+                        "repo_or_dir": "facebookresearch/dino",
+                        "model": "dino_vitb16"
+                    },
+                    "image_patch_size": 16,
+                    "as_feature_extractor": true
+                }
+            },
+            "requirements": {
+                "packages": ["torch", "torchvision"],
+                "cpu": {"support": true},
+                "gpu": {"support": true}
+            },
+            "tags": ["embeddings", "torch", "dino", "dino-v1"],
+            "date_added": "2026-06-07 00:00:00"
+        }
+    ]
+}
