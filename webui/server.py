@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sdk.exportv2 import default_export_zip, run_export  # noqa: E402
+from webui.fiftyone_upload import (  # noqa: E402
+    default_dataset_name,
+    fiftyone_app_url,
+    list_datasets,
+    upload_images,
+    upload_root,
+)
+from webui.fiftyone_upload_page import fiftyone_upload_page_html  # noqa: E402
 from webui.hub_page import hub_page_html  # noqa: E402
 from webui.nuclio_deploy import deploy_work_dir, list_deployable_work_dirs  # noqa: E402
 from webui.nuclio_deploy_page import NUCLIO_DEPLOY_PAGE_HTML  # noqa: E402
@@ -113,7 +121,7 @@ def index() -> str:
   </style>
 </head>
 <body>
-  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/hub">統括</a> &middot; <a href="/">CVAT export</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/hub">統括</a> &middot; <a href="/">CVAT export</a> &middot; <a href="/fiftyone-upload">FiftyOne upload</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
   <h1>CVAT COCO export</h1>
   <p class="muted">ZIP は <code>data/exports/task_{task-id}_{YYYY_MMDD_HHMM}.zip</code> を自動で使います。</p>
   <form id="f">
@@ -200,6 +208,54 @@ async def api_export(body: ExportRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"{exc!s}\n{tb}") from exc
 
     return {"ok": True, "out_zip": out_zip_s, "extract_dir": extract_dir_s}
+
+
+@app.get("/fiftyone-upload", response_class=HTMLResponse)
+def fiftyone_upload_page() -> str:
+    return fiftyone_upload_page_html(
+        default_dataset=default_dataset_name(),
+        app_url=fiftyone_app_url(),
+        upload_root=str(upload_root()),
+    )
+
+
+@app.get("/api/fiftyone/datasets")
+def api_fiftyone_datasets() -> dict:
+    try:
+        return {"datasets": list_datasets(), "default_dataset": default_dataset_name()}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/fiftyone/upload")
+async def api_fiftyone_upload(
+    dataset: str = Form(...),
+    tags: str = Form(""),
+    files: List[UploadFile] = File(...),
+) -> dict:
+    if not files:
+        raise HTTPException(status_code=400, detail="no files provided")
+
+    tag_list = [part.strip() for part in tags.split(",") if part.strip()]
+    payloads: List[tuple[str, bytes]] = []
+    for upload in files:
+        content = await upload.read()
+        name = upload.filename or "upload"
+        payloads.append((name, content))
+
+    def _job():
+        return upload_images(dataset, payloads, tags=tag_list)
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(_executor, _job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"{exc!s}\n{tb}") from exc
 
 
 @app.get("/train", response_class=HTMLResponse)

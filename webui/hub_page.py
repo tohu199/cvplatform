@@ -98,6 +98,8 @@ def hub_page_html(cvat_ui_url: str) -> str:
     <span aria-hidden="true">·</span>
     <a href="/">CVAT export</a>
     <span aria-hidden="true">·</span>
+    <a href="/fiftyone-upload">FiftyOne upload</a>
+    <span aria-hidden="true">·</span>
     <a href="/train">YOLOX 学習</a>
     <span aria-hidden="true">·</span>
     <a href="/nuclio-deploy">Nuclio デプロイ</a>

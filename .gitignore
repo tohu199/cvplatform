@@ -9,6 +9,7 @@ login_info.yaml
 !/data/work_dirs/.gitkeep
 /data/exports/*
 !/data/exports/.gitkeep
+data/fiftyone/*
 
 *.pyc
 

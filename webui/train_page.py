@@ -41,7 +41,7 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <nav><a href="/hub">統括</a><a href="/">CVAT export</a><a href="/train">YOLOX 学習</a><a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+  <nav><a href="/hub">統括</a><a href="/">CVAT export</a><a href="/fiftyone-upload">FiftyOne upload</a><a href="/train">YOLOX 学習</a><a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
   <h1>YOLOX-S ファインチューン</h1>
   <p class="muted">メトリックは <code>work_dirs/.../vis_data/scalars.json</code> から読み取ります（学習開始後しばらくでファイルが現れます）。</p>
 

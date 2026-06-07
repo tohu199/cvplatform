@@ -37,6 +37,7 @@ NUCLIO_DEPLOY_PAGE_HTML = """<!DOCTYPE html>
   <nav>
     <a href="/hub">統括</a>
     <a href="/">CVAT export</a>
+    <a href="/fiftyone-upload">FiftyOne upload</a>
     <a href="/train">YOLOX 学習</a>
     <a href="/nuclio-deploy">Nuclio デプロイ</a>
   </nav>
