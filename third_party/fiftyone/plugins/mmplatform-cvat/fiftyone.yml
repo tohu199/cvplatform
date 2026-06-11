@@ -1,5 +1,5 @@
 name: "@mmplatform/cvat-kcenter"
-description: k-center greedy ordering and CVAT upload from the FiftyOne App
+description: k-center and PPAL sample ordering with CVAT upload from the FiftyOne App
 tags:
   - annotation
   - cvat

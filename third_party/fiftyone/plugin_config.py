@@ -42,7 +42,7 @@ def configure_plugins() -> Path:
 
 
 def make_cvat_panel_spaces():
-    """Initial App layout: Samples + CVAT k-center panel side by side."""
+    """Initial App layout: Samples + CVAT active-learning panel side by side."""
     from fiftyone.core.odm.workspace import Panel as WorkspacePanel
     from fiftyone.core.odm.workspace import Space
 

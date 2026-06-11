@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch FiftyOne App with the mmplatform CVAT k-center plugin enabled."""
+"""Launch FiftyOne App with the mmplatform CVAT k-center / PPAL plugin enabled."""
 
 from __future__ import annotations
 
@@ -45,13 +45,20 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=5151)
     parser.add_argument("--address", default="0.0.0.0")
     parser.add_argument(
+        "--selection-mode",
+        choices=("kcenter", "ppal"),
+        default="kcenter",
+        help="Initial selection mode in the CVAT panel (default: kcenter)",
+    )
+    parser.add_argument(
         "--no-auto-panel",
         action="store_true",
-        help="Do not open the CVAT k-center panel automatically at startup",
+        help="Do not open the CVAT active-learning panel automatically at startup",
     )
     args = parser.parse_args()
 
     plugins_dir = configure_plugins()
+    os.environ["MMPLATFORM_SELECTION_MODE"] = args.selection_mode
     dataset = _load_dataset(args.dataset, args.max_samples)
     spaces = None if args.no_auto_panel else make_cvat_panel_spaces()
 
@@ -67,10 +74,11 @@ def main() -> None:
     print(f"FiftyOne App: http://localhost:{args.port}")
     print(f"Plugins dir: {plugins_dir}")
     if args.no_auto_panel:
-        print("Open panel manually: Samples タブ横の + → CVAT: k-center 選定")
+        print("Open panel manually: Samples タブ横の + → CVAT: 能動学習選定")
     else:
-        print("CVAT k-center panel should open beside Samples automatically.")
-    print("Fallback: Operator browser → Open CVAT k-center panel")
+        print("CVAT active-learning panel should open beside Samples automatically.")
+    print(f"Initial selection mode: {args.selection_mode}")
+    print("Fallback: Operator browser → Open CVAT active-learning panel")
     session.wait()
 
 
