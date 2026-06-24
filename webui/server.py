@@ -41,9 +41,18 @@ from webui.train_manager import (  # noqa: E402
     suggest_categories_for_request,
     train_manager,
 )
+from webui.ppal_train_manager import (  # noqa: E402
+    WEB_PPAL_PREFIX,
+    default_work_dir_basename as ppal_default_work_dir_basename,
+    list_ppal_pretrained_work_dirs,
+    ppal_train_defaults,
+    ppal_train_manager,
+    suggest_categories_for_ppal,
+)
+from webui.ppal_train_page import PPAL_TRAIN_PAGE_HTML  # noqa: E402
 from webui.train_page import TRAIN_PAGE_HTML  # noqa: E402
 
-app = FastAPI(title="mmplatform webui", version="0.3.1")
+app = FastAPI(title="mmplatform webui", version="0.4.0")
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -93,6 +102,31 @@ class SuggestCategoriesRequest(BaseModel):
     val_sources: List[TrainDataSourceItem] = Field(default_factory=list)
 
 
+class PpalSuggestCategoriesRequest(BaseModel):
+    labeled_source: TrainDataSourceItem
+    val_source: TrainDataSourceItem
+
+
+class PpalTrainStartRequest(BaseModel):
+    labeled_source: TrainDataSourceItem
+    val_source: TrainDataSourceItem
+    max_epochs: int = Field(26, ge=1, le=10000)
+    lr: float = Field(0.01, gt=0, le=100.0)
+    batch_size: int = Field(1, ge=1, le=64)
+    pretrained_work_dir: Optional[str] = Field(
+        default=None,
+        description="PPAL work_dirs 直下の web_ppal_* フォルダ名",
+    )
+    work_dir_name: Optional[str] = Field(
+        default=None,
+        description="web_ppal_ 以降の接尾辞、または web_ppal_* 全体。未指定時は自動生成",
+    )
+    classes: Optional[List[str]] = Field(
+        default=None,
+        description="学習するカテゴリ名。未指定時は labeled データの全カテゴリ",
+    )
+
+
 @app.get("/hub", response_class=HTMLResponse)
 def hub() -> str:
     cvat = os.environ.get("MMPLATFORM_CVAT_UI_URL", "http://localhost:8080").strip()
@@ -121,7 +155,7 @@ def index() -> str:
   </style>
 </head>
 <body>
-  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/hub">統括</a> &middot; <a href="/">CVAT export</a> &middot; <a href="/fiftyone-upload">FiftyOne upload</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/hub">統括</a> &middot; <a href="/">CVAT export</a> &middot; <a href="/fiftyone-upload">FiftyOne upload</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/ppal-train">PPAL 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
   <h1>CVAT COCO export</h1>
   <p class="muted">ZIP は <code>data/exports/task_{task-id}_{YYYY_MMDD_HHMM}.zip</code> を自動で使います。</p>
   <form id="f">
@@ -369,6 +403,91 @@ def api_train_start(body: TrainStartRequest) -> dict:
 @app.post("/api/train/stop")
 def api_train_stop() -> dict:
     ok = train_manager.stop()
+    return {"ok": ok}
+
+
+@app.get("/ppal-train", response_class=HTMLResponse)
+def ppal_train_page() -> str:
+    return PPAL_TRAIN_PAGE_HTML
+
+
+@app.get("/api/ppal-train/datasets")
+def api_ppal_train_datasets() -> dict:
+    return {"datasets": list_export_datasets()}
+
+
+@app.get("/api/ppal-train/defaults")
+def api_ppal_train_defaults() -> dict:
+    return ppal_train_defaults()
+
+
+@app.get("/api/ppal-train/pretrained-models")
+def api_ppal_train_pretrained_models() -> dict:
+    return {"pretrained_models": list_ppal_pretrained_work_dirs()}
+
+
+@app.get("/api/ppal-train/default-work-dir")
+def api_ppal_train_default_work_dir() -> dict:
+    full = ppal_default_work_dir_basename()
+    return {
+        "work_dir_name": full,
+        "work_dir_prefix": WEB_PPAL_PREFIX,
+        "work_dir_suffix_example": full[len(WEB_PPAL_PREFIX) :],
+    }
+
+
+@app.post("/api/ppal-train/suggest-categories")
+def api_ppal_train_suggest_categories(body: PpalSuggestCategoriesRequest) -> dict:
+    try:
+        return suggest_categories_for_ppal(
+            body.labeled_source.model_dump(),
+            body.val_source.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/ppal-train/state")
+def api_ppal_train_state() -> dict:
+    from webui.ppal_metrics import DEFAULT_PPAL_CHART_METRICS
+
+    snap = ppal_train_manager.active_snapshot()
+    if snap is None:
+        return {
+            "status": "idle",
+            "lines_tail": [],
+            "loss_points": [],
+            "metric_series": {},
+            "available_metrics": [],
+            "default_metrics": list(DEFAULT_PPAL_CHART_METRICS),
+            "log_json_path": None,
+        }
+    return snap
+
+
+@app.post("/api/ppal-train/start")
+def api_ppal_train_start(body: PpalTrainStartRequest) -> dict:
+    try:
+        job = ppal_train_manager.start(
+            labeled_source=body.labeled_source.model_dump(),
+            val_source=body.val_source.model_dump(),
+            max_epochs=body.max_epochs,
+            lr=body.lr,
+            batch_size=body.batch_size,
+            pretrained_work_dir=body.pretrained_work_dir,
+            work_dir_name=body.work_dir_name,
+            classes=body.classes,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "job_id": job.job_id, "work_dir": job.work_dir}
+
+
+@app.post("/api/ppal-train/stop")
+def api_ppal_train_stop() -> dict:
+    ok = ppal_train_manager.stop()
     return {"ok": ok}
 
 

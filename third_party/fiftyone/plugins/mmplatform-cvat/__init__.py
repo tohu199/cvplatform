@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
-import time
+from typing import Optional
 
-import fiftyone as fo
 import fiftyone.operators as foo
 import fiftyone.operators.types as types
 
@@ -23,11 +22,18 @@ from .kcenter import (
     set_kcenter_ranks,
     validate_selection_count,
 )
+from .cvat_send import (
+    cvat_env_summary,
+    default_anno_key,
+    send_samples_to_cvat,
+)
 from .ppal_select import (
     PPAL_RANK_FIELD,
+    classes_csv,
     compute_ppal_order,
     list_ppal_checkpoint_options,
     normalize_ppal_checkpoint,
+    read_checkpoint_classes,
     set_ppal_ranks,
 )
 
@@ -49,6 +55,10 @@ def _panel_config() -> foo.PanelConfig:
     return cfg
 
 
+def _default_anno_key() -> str:
+    return default_anno_key()
+
+
 def _parse_classes(raw: str) -> list[str]:
     classes = [part.strip() for part in (raw or "").split(",") if part.strip()]
     if not classes:
@@ -56,8 +66,24 @@ def _parse_classes(raw: str) -> list[str]:
     return classes
 
 
-def _default_anno_key() -> str:
-    return f"mmplatform_cvat_{int(time.time())}"
+def _sync_ppal_classes_from_checkpoint(ctx, checkpoint: Optional[str] = None) -> None:
+    ckpt = (checkpoint or ctx.panel.state.ppal_checkpoint or "").strip()
+    if not ckpt:
+        return
+    try:
+        names = read_checkpoint_classes(ckpt)
+    except ValueError:
+        return
+    ctx.panel.state.classes = classes_csv(names)
+    ctx.panel.state.ppal_allowed_classes = classes_csv(names)
+
+
+def _resolve_cvat_classes(ctx) -> list[str]:
+    mode = ctx.panel.state.selection_mode or MODE_KCENTER
+    if mode == MODE_PPAL:
+        checkpoint = normalize_ppal_checkpoint(ctx.panel.state.ppal_checkpoint)
+        return list(read_checkpoint_classes(checkpoint))
+    return _parse_classes(ctx.panel.state.classes)
 
 
 def _embedding_model_dropdown() -> types.DropdownView:
@@ -140,6 +166,7 @@ class CvatKCenterPanel(foo.Panel):
         ctx.panel.state.ppal_checkpoint = ctx.panel.get_state(
             "ppal_checkpoint", default_checkpoint
         )
+        _sync_ppal_classes_from_checkpoint(ctx, default_checkpoint)
         ctx.panel.state.status = ctx.panel.get_state(
             "status",
             "選定モードを選び、並べ替えてから CVAT に送れます。",
@@ -174,6 +201,8 @@ class CvatKCenterPanel(foo.Panel):
         value = ctx.params.get("value")
         if value in SELECTION_MODES:
             ctx.panel.state.selection_mode = value
+            if value == MODE_PPAL:
+                _sync_ppal_classes_from_checkpoint(ctx)
 
     def on_embedding_model_change(self, ctx):
         value = ctx.params.get("value")
@@ -184,6 +213,7 @@ class CvatKCenterPanel(foo.Panel):
         value = ctx.params.get("value")
         if value:
             ctx.panel.state.ppal_checkpoint = value
+            _sync_ppal_classes_from_checkpoint(ctx, value)
 
     def _target_view(self, ctx):
         if ctx.view != ctx.dataset.view():
@@ -317,24 +347,30 @@ class CvatKCenterPanel(foo.Panel):
 
         anno_key = (ctx.panel.state.anno_key or _default_anno_key()).strip()
         label_field = (ctx.panel.state.label_field or "ground_truth").strip()
-        classes = _parse_classes(ctx.panel.state.classes)
-
-        view = ctx.dataset.select(selected)
-        ctx.panel.state.status = f"CVAT へ {len(selected)} 枚を送信中…"
         try:
-            view.annotate(
-                anno_key,
-                backend="cvat",
+            classes = _resolve_cvat_classes(ctx)
+        except ValueError as exc:
+            ctx.ops.notify(str(exc), variant="error")
+            ctx.panel.state.status = str(exc)
+            return
+
+        ctx.panel.state.status = f"CVAT へ {len(selected)} 枚を送信中… ({cvat_env_summary()})"
+        try:
+            used_key = send_samples_to_cvat(
+                ctx.dataset,
+                selected,
+                anno_key=anno_key,
                 label_field=label_field,
-                label_type="detections",
                 classes=classes,
                 launch_editor=True,
             )
+            ctx.panel.state.anno_key = _default_anno_key()
             ctx.panel.state.status = (
-                f"CVAT 送信完了: anno_key='{anno_key}', {len(selected)} 枚"
+                f"CVAT 送信完了: anno_key='{used_key}', {len(selected)} 枚"
             )
             ctx.ops.notify(ctx.panel.state.status, variant="success")
         except Exception as exc:
+            ctx.panel.state.anno_key = _default_anno_key()
             ctx.panel.state.status = f"CVAT 送信失敗: {exc}"
             ctx.ops.notify(str(exc), variant="error")
 
@@ -351,6 +387,8 @@ class CvatKCenterPanel(foo.Panel):
 2. **並べ替え** — 優先順に View を更新し先頭 {DEFAULT_SELECT} 枚を選択
 3. グリッドで {MIN_SELECT} 枚以上を選択
 4. **CVAT に送信**
+
+{cvat_env_summary()}
 
 {_python_version_note()}
 
@@ -399,12 +437,25 @@ class CvatKCenterPanel(foo.Panel):
 
         panel.str("anno_key", label="Annotation key", required=True)
         panel.str("label_field", label="Label field", required=True)
-        panel.str(
-            "classes",
-            label="Classes (comma-separated)",
-            description="例: person,car,dog",
-            required=True,
-        )
+        if mode == MODE_PPAL:
+            allowed = (ctx.panel.state.ppal_allowed_classes or ctx.panel.state.classes or "").strip()
+            if not allowed and ctx.panel.state.ppal_checkpoint:
+                _sync_ppal_classes_from_checkpoint(ctx)
+                allowed = (ctx.panel.state.classes or "").strip()
+            panel.str(
+                "classes",
+                label="Classes（checkpoint 固定）",
+                description="PPAL checkpoint の学習クラスと一致します。変更できません。",
+                required=True,
+                read_only=True,
+            )
+        else:
+            panel.str(
+                "classes",
+                label="Classes (comma-separated)",
+                description="例: person,car,dog",
+                required=True,
+            )
         panel.message("status", ctx.panel.state.status or "")
 
         running = bool(ctx.panel.state.kcenter_running)
@@ -527,17 +578,16 @@ class SendSelectedToCvat(foo.Operator):
         label_field = ctx.params["label_field"].strip()
         classes = _parse_classes(ctx.params["classes"])
 
-        view = ctx.dataset.select(selected)
-        view.annotate(
-            anno_key,
-            backend="cvat",
+        used_key = send_samples_to_cvat(
+            ctx.dataset,
+            selected,
+            anno_key=anno_key,
             label_field=label_field,
-            label_type="detections",
             classes=classes,
             launch_editor=True,
         )
 
-        return {"message": f"Sent {len(selected)} samples to CVAT (anno_key={anno_key})"}
+        return {"message": f"Sent {len(selected)} samples to CVAT (anno_key={used_key})"}
 
 
 class OpenCvatKcenterPanel(foo.Operator):

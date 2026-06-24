@@ -102,6 +102,8 @@ def hub_page_html(cvat_ui_url: str) -> str:
     <span aria-hidden="true">·</span>
     <a href="/train">YOLOX 学習</a>
     <span aria-hidden="true">·</span>
+    <a href="/ppal-train">PPAL 学習</a>
+    <span aria-hidden="true">·</span>
     <a href="/nuclio-deploy">Nuclio デプロイ</a>
   </nav>
 
@@ -135,13 +137,22 @@ def hub_page_html(cvat_ui_url: str) -> str:
       </a>
     </div>
 
-    <a class="node" href="/train" title="学習ジョブを開始">
+    <a class="node" href="/train" title="YOLOX 学習">
       <h2>MMDetection</h2>
       <p class="node-sub">この WebUI から実行</p>
       <ul>
-        <li><strong>モデル学習</strong>（ファインチューン）</li>
+        <li><strong>YOLOX 学習</strong>（CVAT 自動教示向け）</li>
       </ul>
       <p class="tap-hint">クリック → YOLOX 学習ページ</p>
+    </a>
+
+    <a class="node" href="/ppal-train" title="PPAL RetinaNet 学習">
+      <h2>PPAL</h2>
+      <p class="node-sub">能動学習用 RetinaNet</p>
+      <ul>
+        <li><strong>PPAL 学習</strong>（FiftyOne サンプリング向け）</li>
+      </ul>
+      <p class="tap-hint">クリック → PPAL 学習ページ</p>
     </a>
   </section>
 

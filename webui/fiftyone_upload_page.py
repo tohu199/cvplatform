@@ -50,6 +50,7 @@ def fiftyone_upload_page_html(
     <a href="/">CVAT export</a>
     <a href="/fiftyone-upload"><strong>FiftyOne upload</strong></a>
     <a href="/train">YOLOX 学習</a>
+    <a href="/ppal-train">PPAL 学習</a>
     <a href="/nuclio-deploy">Nuclio デプロイ</a>
   </nav>
 

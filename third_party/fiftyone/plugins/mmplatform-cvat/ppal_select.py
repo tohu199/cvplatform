@@ -134,6 +134,40 @@ def _checkpoint_sort_key(path: Path) -> Tuple[int, str]:
     return (2, str(path))
 
 
+def read_checkpoint_classes(checkpoint: str) -> Tuple[str, ...]:
+    """Return CLASSES stored in a PPAL-trained checkpoint."""
+    import torch
+
+    path = Path(checkpoint).resolve()
+    if not path.is_file():
+        raise ValueError(f"checkpoint が見つかりません: {checkpoint}")
+
+    ckpt = torch.load(str(path), map_location="cpu")
+    state = ckpt.get("state_dict", ckpt)
+    if "bbox_head.class_quality" not in state:
+        raise ValueError(
+            "PPAL 学習済み checkpoint が必要です（bbox_head.class_quality がありません）: "
+            f"{path}"
+        )
+
+    meta = ckpt.get("meta", {})
+    classes = meta.get("CLASSES")
+    if classes:
+        names = tuple(str(c) for c in classes)
+        if names:
+            return names
+
+    n = int(state["bbox_head.class_quality"].shape[0])
+    raise ValueError(
+        "checkpoint に CLASSES メタデータがありません。"
+        f" Web UI / PPAL 学習で保存した checkpoint を使用してください: {path}"
+    )
+
+
+def classes_csv(class_names: Sequence[str]) -> str:
+    return ",".join(str(name) for name in class_names)
+
+
 def list_ppal_checkpoint_options() -> List[Dict[str, str]]:
     """Scan third_party/PPAL/work_dirs for PPAL-trained checkpoints."""
     root = ppal_work_dirs()
@@ -157,7 +191,18 @@ def list_ppal_checkpoint_options() -> List[Dict[str, str]]:
             label = str(path.relative_to(root))
         except ValueError:
             label = path.name
-        options.append({"name": resolved, "label": label})
+        try:
+            class_names = read_checkpoint_classes(resolved)
+        except ValueError:
+            continue
+        class_label = ", ".join(class_names)
+        options.append(
+            {
+                "name": resolved,
+                "label": f"{label}  [{class_label}]",
+                "classes": classes_csv(class_names),
+            }
+        )
 
     return options
 
@@ -269,8 +314,16 @@ def _sample_needs_metadata(sample: fo.Sample) -> bool:
     return not width or not height
 
 
+def _resolve_dataset(
+    collection: fo.core.collections.SampleCollection,
+) -> fo.Dataset:
+    if isinstance(collection, fo.Dataset):
+        return collection
+    return collection.dataset
+
+
 def _ensure_view_metadata(
-    view: fo.core.view.DatasetView,
+    view: fo.core.collections.SampleCollection,
     progress: Optional[KCenterProgress] = None,
 ) -> None:
     missing_ids = [sample.id for sample in view if _sample_needs_metadata(sample)]
@@ -281,7 +334,7 @@ def _ensure_view_metadata(
         progress.log(f"metadata を自動計算中… ({len(missing_ids)} 枚)")
         progress.set(0.03, f"metadata 計算中… ({len(missing_ids)} 枚)")
 
-    view.dataset.select(missing_ids).compute_metadata()
+    _resolve_dataset(view).select(missing_ids).compute_metadata()
 
 
 def _detections_to_coco_boxes(

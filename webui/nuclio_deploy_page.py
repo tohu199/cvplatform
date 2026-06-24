@@ -39,6 +39,7 @@ NUCLIO_DEPLOY_PAGE_HTML = """<!DOCTYPE html>
     <a href="/">CVAT export</a>
     <a href="/fiftyone-upload">FiftyOne upload</a>
     <a href="/train">YOLOX 学習</a>
+    <a href="/ppal-train">PPAL 学習</a>
     <a href="/nuclio-deploy">Nuclio デプロイ</a>
   </nav>
   <h1>CVAT 自動アノテ用 Nuclio デプロイ</h1>

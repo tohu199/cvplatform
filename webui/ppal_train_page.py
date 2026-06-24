@@ -1,15 +1,15 @@
-# HTML for /train (kept separate from server.py for readability).
+# HTML for /ppal-train (PPAL RetinaNet active-learning training).
 
-TRAIN_PAGE_HTML = """<!DOCTYPE html>
+PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>YOLOX 学習</title>
+  <title>PPAL 学習</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root { font-family: system-ui, sans-serif; }
-    body { max-width: 58rem; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.45; }
+    body { max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.45; }
     nav { margin-bottom: 1rem; font-size: 0.95rem; }
     nav a { margin-right: 1rem; }
     label { display: block; font-weight: 600; margin-top: 0.75rem; }
@@ -19,69 +19,69 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
     .row > div { flex: 1 1 12rem; }
     button { margin-top: 1rem; margin-right: 0.5rem; padding: 0.45rem 0.9rem; font-size: 1rem; cursor: pointer; }
     #log { width: 100%; height: 12rem; font-family: ui-monospace, monospace; font-size: 0.78rem; overflow: auto; background: #111; color: #e8e8e8; padding: 0.5rem; border-radius: 4px; white-space: pre-wrap; }
-    .chart-panel { margin-top: 1rem; max-width: 100%; height: 240px; position: relative; }
+    .chart-panel { margin-top: 1rem; max-width: 100%; height: 220px; position: relative; }
     .muted { color: #555; font-size: 0.88rem; }
     .err { color: #a22; }
     .ok { color: #080; }
     .status { margin-top: 0.5rem; font-weight: 600; }
-    #metricChecks { margin-top: 0.5rem; padding: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; max-height: 10rem; overflow: auto; }
-    #metricChecks label { display: inline-block; margin: 0 0.75rem 0.35rem 0; font-weight: 400; font-size: 0.88rem; }
     .data-panel { margin-top: 0.5rem; padding: 0.75rem; border: 1px solid #ddd; border-radius: 6px; background: #fafafa; }
-    .data-panel h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
-    select[multiple].source-select { width: 100%; min-height: 9rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
     .work-dir-name-row { display: flex; align-items: stretch; flex-wrap: wrap; max-width: 36rem; margin-top: 0.25rem; }
     .work-dir-prefix {
       display: flex; align-items: center; font-family: ui-monospace, monospace; font-size: 1rem;
       padding: 0.35rem 0.55rem; background: #f0f0f0; border: 1px solid #ccc; border-right: none;
       border-radius: 4px 0 0 4px; color: #333;
     }
+    #work_dir_suffix { flex: 1 1 12rem; min-width: 10rem; border-radius: 0 4px 4px 0; }
     #categoryChecks { margin-top: 0.5rem; padding: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; max-height: 9rem; overflow: auto; }
     #categoryChecks label { display: inline-block; margin: 0 0.75rem 0.35rem 0; font-weight: 400; font-size: 0.88rem; }
-    #work_dir_suffix { flex: 1 1 12rem; min-width: 10rem; border-radius: 0 4px 4px 0; }
+    #labeled_source, #val_source { width: 100%; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+    #metricChecks { margin-top: 0.5rem; padding: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; max-height: 10rem; overflow: auto; }
+    #metricChecks label { display: inline-block; margin: 0 0.75rem 0.35rem 0; font-weight: 400; font-size: 0.88rem; }
   </style>
 </head>
 <body>
-  <nav><a href="/hub">統括</a><a href="/">CVAT export</a><a href="/fiftyone-upload">FiftyOne upload</a><a href="/train">YOLOX 学習</a><a href="/ppal-train">PPAL 学習</a><a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
-  <h1>YOLOX-S ファインチューン</h1>
-  <p class="muted">メトリックは <code>work_dirs/.../vis_data/scalars.json</code> から読み取ります（学習開始後しばらくでファイルが現れます）。</p>
+  <nav><a href="/hub">統括</a><a href="/">CVAT export</a><a href="/fiftyone-upload">FiftyOne upload</a><a href="/train">YOLOX 学習</a><a href="/ppal-train"><strong>PPAL 学習</strong></a><a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+  <h1>PPAL RetinaNet 学習</h1>
+  <p class="muted">
+    CVAT でアノテーション済みの <strong>labeled / val データを各 1 件</strong> で PPAL 用 RetinaNet を学習します。
+    ハイパーパラメータの既定値は PPAL 本家（<code>retinanet_26e.py</code> / <code>ppal_retinanet_coco.py</code>）に合わせています。
+    出力は <code>third_party/PPAL/work_dirs/web_ppal_*</code> に保存され、FiftyOne の PPAL サンプリングで利用できます。
+  </p>
 
   <label for="work_dir_suffix">出力 work_dir 名</label>
   <div class="work-dir-name-row">
-    <span class="work-dir-prefix" id="work_dir_prefix">web_train_</span>
-    <input id="work_dir_suffix" type="text" autocomplete="off" spellcheck="false" aria-describedby="work_dir_suffix_help" />
+    <span class="work-dir-prefix" id="work_dir_prefix">web_ppal_</span>
+    <input id="work_dir_suffix" type="text" autocomplete="off" spellcheck="false" />
   </div>
-  <p id="work_dir_suffix_help" class="muted">空欄のときは <code>web_train_YYYY_MMDD_HHMM_xxxxxxxx</code> を自動生成します。接尾辞は英数字と <code>_</code> <code>-</code> のみ使用できます。</p>
-
-  <label for="config_path">MMDetection config</label>
-  <select id="config_path"></select>
-  <p class="muted">既定は <code>configs/yolox/yolox_s_finetune.py</code>（CVAT エクスポート向け）。他モデルはデータセット構造が異なる場合があります。</p>
+  <p class="muted">空欄のときは自動生成。接尾辞は英数字と <code>_</code> <code>-</code> のみ。</p>
 
   <section class="data-panel">
-    <h2>Train データ</h2>
-    <p class="muted">Ctrl / Cmd + クリックで複数選択。別のエクスポートフォルダも混在できます。</p>
-    <select id="train_sources" class="source-select" multiple aria-label="Train データ"></select>
+    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">Labeled データ（1 件）</h2>
+    <p class="muted">学習用アノテーション（CVAT エクスポート COCO）。</p>
+    <select id="labeled_source" aria-label="Labeled データ"></select>
   </section>
 
   <section class="data-panel">
-    <h2>Val データ</h2>
-    <p class="muted">検証用アノテーションを複数選択できます（評価時は COCO JSON をマージします）。</p>
-    <select id="val_sources" class="source-select" multiple aria-label="Val データ"></select>
+    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">Val データ（1 件）</h2>
+    <p class="muted">検証用アノテーション。学習中に bbox mAP を評価します。</p>
+    <select id="val_source" aria-label="Val データ"></select>
   </section>
 
   <section class="data-panel">
-    <h2>カテゴリ</h2>
-    <p class="muted">Train / Val データの選択から自動で候補を出します。チェックを外すとそのクラスは学習・評価しません。</p>
-    <div id="categoryChecks"><span class="muted">（Train または Val を選択してください）</span></div>
+    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">カテゴリ</h2>
+    <div id="categoryChecks"><span class="muted">（Labeled / Val を選択してください）</span></div>
   </section>
 
-  <label for="pretrained">事前学習重み（work_dirs）</label>
+  <label for="pretrained">事前学習（PPAL work_dirs）</label>
   <select id="pretrained"></select>
-  <p class="muted">未選択時は config の COCO 事前学習 URL を使用します。選択時は <code>last_checkpoint</code> の .pth を <code>model.init_cfg.checkpoint</code> に設定します。</p>
+  <p class="muted">未選択時は ResNet 事前学習から開始。選択時は前回の PPAL checkpoint から継続学習します。</p>
+
+  <p class="muted">config: <code id="config_hint">configs/coco_active_learning/al_train/retinanet_26e.py</code>（固定）</p>
 
   <div class="row">
-    <div><label for="max_epochs">max_epochs</label><input id="max_epochs" type="number" min="1" value="50" /></div>
-    <div><label for="lr">学習率 (lr)</label><input id="lr" type="number" step="any" value="0.001" /></div>
-    <div><label for="batch_size">batch_size</label><input id="batch_size" type="number" min="1" value="4" /></div>
+    <div><label for="max_epochs">max_epochs</label><input id="max_epochs" type="number" min="1" value="26" /></div>
+    <div><label for="lr">学習率 (lr)</label><input id="lr" type="number" step="any" value="0.01" /></div>
+    <div><label for="batch_size">batch_size (samples_per_gpu)</label><input id="batch_size" type="number" min="1" value="1" /></div>
   </div>
 
   <div>
@@ -90,10 +90,10 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
   </div>
   <div id="status" class="status"></div>
   <div id="workdir" class="muted"></div>
-  <div id="scalarpath" class="muted"></div>
+  <div id="logjsonpath" class="muted"></div>
 
   <h2>メトリック（折れ線）</h2>
-  <p class="muted">初期表示: <strong>loss</strong> / <strong>memory</strong> / <strong>coco/bbox_mAP</strong> のみ。下のチェックで loss_* ・ memory ・ lr ・ time ・ coco/bbox_mAP_* などを追加できます。</p>
+  <p class="muted">初期表示: <strong>loss</strong> / <strong>memory</strong> / <strong>coco/bbox_mAP</strong>。PPAL の <code>*.log.json</code> から読み取ります。</p>
   <div id="metricChecks"></div>
 
   <h3>loss 系（loss, loss_cls, …）</h3>
@@ -107,7 +107,7 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
   <div id="log"></div>
 
   <script>
-    const STORAGE_KEY = 'mmplatform_train_selected_metrics';
+    const STORAGE_KEY = 'mmplatform_ppal_train_selected_metrics';
     let datasets = [];
     let lastState = {};
     let defaultMetrics = ['loss', 'memory', 'coco/bbox_mAP'];
@@ -134,37 +134,23 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
       return opts;
     }
 
-    function fillSourceSelect(el, sourceOptions) {
-      el.innerHTML = '';
-      if (!sourceOptions.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.disabled = true;
-        opt.textContent = '(data/exports に COCO がありません)';
-        el.appendChild(opt);
-        return;
-      }
-      for (const o of sourceOptions) {
-        const opt = document.createElement('option');
-        opt.value = o.value;
-        opt.textContent = o.label;
-        el.appendChild(opt);
-      }
+    function getSelectedLabeledSource() {
+      return getSelectedSource('labeled_source');
     }
 
-    function getSelectedSources(selectId) {
+    function getSelectedValSource() {
+      return getSelectedSource('val_source');
+    }
+
+    function getSelectedSource(selectId) {
       const el = document.getElementById(selectId);
-      const out = [];
-      for (const opt of el.selectedOptions) {
-        if (!opt.value) continue;
-        try { out.push(JSON.parse(opt.value)); } catch (e) {}
-      }
-      return out;
+      const v = el.value;
+      if (!v) return null;
+      try { return JSON.parse(v); } catch (e) { return null; }
     }
 
     function getSelectedCategories() {
       const box = document.getElementById('categoryChecks');
-      if (!box) return [];
       return [...box.querySelectorAll('input[type=checkbox][data-category]:checked')].map(i => i.dataset.category);
     }
 
@@ -173,7 +159,7 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
       const rows = (payload && payload.categories) || [];
       suggestedCategoryNames = (payload && payload.names) || [];
       if (!rows.length) {
-        box.innerHTML = '<span class="muted">（Train または Val を選択してください）</span>';
+        box.innerHTML = '<span class="muted">（Labeled / Val を選択してください）</span>';
         return;
       }
       const prev = new Set(getSelectedCategories());
@@ -184,29 +170,30 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
         const inp = document.createElement('input');
         inp.type = 'checkbox';
         inp.dataset.category = row.name;
-        const tags = [];
-        if (row.in_train) tags.push('train');
-        if (row.in_val) tags.push('val');
-        const checked = prev.size ? prev.has(row.name) : defaultSel.has(row.name);
-        inp.checked = checked;
+        inp.checked = prev.size ? prev.has(row.name) : defaultSel.has(row.name);
         lab.appendChild(inp);
-        lab.appendChild(document.createTextNode(' ' + row.name + (tags.length ? ' (' + tags.join(', ') + ')' : '')));
+        lab.appendChild(document.createTextNode(' ' + row.name));
         box.appendChild(lab);
       }
     }
 
     async function refreshSuggestedCategories() {
-      const train_sources = getSelectedSources('train_sources');
-      const val_sources = getSelectedSources('val_sources');
-      if (!train_sources.length && !val_sources.length) {
+      const labeled_source = getSelectedLabeledSource();
+      const val_source = getSelectedValSource();
+      if (!labeled_source && !val_source) {
         renderCategoryChecks({ categories: [], names: [], default_selected: [] });
         return;
       }
+      if (!labeled_source || !val_source) {
+        renderCategoryChecks({ categories: [], names: [], default_selected: [] });
+        document.getElementById('categoryChecks').innerHTML = '<span class="muted">（Labeled と Val の両方を選択してください）</span>';
+        return;
+      }
       try {
-        const r = await fetch('/api/train/suggest-categories', {
+        const r = await fetch('/api/ppal-train/suggest-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ train_sources, val_sources }),
+          body: JSON.stringify({ labeled_source, val_source }),
         });
         const j = await r.json();
         if (!r.ok) {
@@ -222,77 +209,59 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
 
     function scheduleCategoryRefresh() {
       if (categoryFetchTimer) clearTimeout(categoryFetchTimer);
-      categoryFetchTimer = setTimeout(refreshSuggestedCategories, 250);
+      categoryFetchTimer = setTimeout(refreshSuggestedCategories, 200);
+    }
+
+    function fillSourceSelect(el, sourceOptions) {
+      el.innerHTML = '';
+      if (!sourceOptions.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.textContent = '(data/exports に COCO がありません)';
+        el.appendChild(opt);
+        return;
+      }
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = '— 選択してください —';
+      el.appendChild(placeholder);
+      for (const o of sourceOptions) {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        el.appendChild(opt);
+      }
     }
 
     function populateSourceSelects() {
       const opts = buildSourceOptions(datasets);
-      fillSourceSelect(document.getElementById('train_sources'), opts);
-      fillSourceSelect(document.getElementById('val_sources'), opts);
+      fillSourceSelect(document.getElementById('labeled_source'), opts);
+      fillSourceSelect(document.getElementById('val_source'), opts);
       scheduleCategoryRefresh();
     }
 
-    async function loadDefaultWorkDirName() {
-      const el = document.getElementById('work_dir_suffix');
-      const prefixEl = document.getElementById('work_dir_prefix');
+    async function loadDefaults() {
       try {
-        const r = await fetch('/api/train/default-work-dir');
+        const r = await fetch('/api/ppal-train/defaults');
         const j = await r.json();
-        if (r.ok) {
-          if (j.work_dir_prefix) prefixEl.textContent = j.work_dir_prefix;
-          const example = j.work_dir_suffix_example || '';
-          if (example) el.placeholder = example + '（空欄で自動）';
-        }
+        if (!r.ok) return;
+        if (j.max_epochs != null) document.getElementById('max_epochs').value = j.max_epochs;
+        if (j.lr != null) document.getElementById('lr').value = j.lr;
+        if (j.batch_size != null) document.getElementById('batch_size').value = j.batch_size;
+        if (j.config_path) document.getElementById('config_hint').textContent = j.config_path;
       } catch (e) {}
     }
-
-    let defaultConfigId = 'configs/yolox/yolox_s_finetune.py';
-
-    async function loadMmdetConfigs() {
-      const sel = document.getElementById('config_path');
-      sel.innerHTML = '';
+    async function loadDefaultWorkDirName() {
       try {
-        const r = await fetch('/api/train/configs');
+        const r = await fetch('/api/ppal-train/default-work-dir');
         const j = await r.json();
-        const rows = j.configs || [];
-        if (j.default_config) defaultConfigId = j.default_config;
-        if (!rows.length) {
-          const opt = document.createElement('option');
-          opt.value = defaultConfigId;
-          opt.textContent = defaultConfigId;
-          sel.appendChild(opt);
-          return;
+        if (r.ok) {
+          if (j.work_dir_prefix) document.getElementById('work_dir_prefix').textContent = j.work_dir_prefix;
+          const example = j.work_dir_suffix_example || '';
+          if (example) document.getElementById('work_dir_suffix').placeholder = example + '（空欄で自動）';
         }
-        const groups = {};
-        for (const row of rows) {
-          const g = row.group || 'other';
-          if (!groups[g]) groups[g] = [];
-          groups[g].push(row);
-        }
-        const groupNames = Object.keys(groups).sort((a, b) => {
-          if (a === 'yolox') return -1;
-          if (b === 'yolox') return 1;
-          return a.localeCompare(b);
-        });
-        for (const g of groupNames) {
-          const og = document.createElement('optgroup');
-          og.label = g;
-          for (const row of groups[g]) {
-            const opt = document.createElement('option');
-            opt.value = row.id;
-            opt.textContent = row.label;
-            if (row.is_default) opt.textContent += ' (default)';
-            og.appendChild(opt);
-          }
-          sel.appendChild(og);
-        }
-        sel.value = defaultConfigId;
-      } catch (e) {
-        const opt = document.createElement('option');
-        opt.value = defaultConfigId;
-        opt.textContent = defaultConfigId + ' (default)';
-        sel.appendChild(opt);
-      }
+      } catch (e) {}
     }
 
     async function loadPretrainedModels() {
@@ -300,29 +269,21 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
       sel.innerHTML = '';
       const def = document.createElement('option');
       def.value = '';
-      def.textContent = '（デフォルト: COCO 事前学習 URL）';
+      def.textContent = '（なし: ResNet 事前学習から開始）';
       sel.appendChild(def);
-      const r = await fetch('/api/train/pretrained-models');
+      const r = await fetch('/api/ppal-train/pretrained-models');
       const j = await r.json();
-      const rows = j.pretrained_models || [];
-      if (!rows.length) {
-        const none = document.createElement('option');
-        none.value = '';
-        none.disabled = true;
-        none.textContent = '（work_dirs に利用可能なチェックポイントがありません）';
-        sel.appendChild(none);
-        return;
-      }
-      for (const row of rows) {
+      for (const row of (j.pretrained_models || [])) {
         const opt = document.createElement('option');
         opt.value = row.id;
-        opt.textContent = row.id + '  —  ' + row.checkpoint;
+        const tag = row.ppal_ready ? 'PPAL OK' : 'checkpoint';
+        opt.textContent = row.id + '  —  ' + row.checkpoint + ' (' + tag + ')';
         sel.appendChild(opt);
       }
     }
 
     async function loadDatasets() {
-      const r = await fetch('/api/train/datasets');
+      const r = await fetch('/api/ppal-train/datasets');
       const j = await r.json();
       datasets = j.datasets || [];
       populateSourceSelects();
@@ -421,18 +382,15 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
       }
       const ms = j.metric_series || {};
       const sel = getSelectedMetrics();
-      const yLoss = 'loss 系';
-      const yMap = 'mAP';
-      const ySys = 'memory / lr / time …';
-      renderOneChart('loss', 'cLoss', ms, sel, yLoss);
-      renderOneChart('map', 'cMap', ms, sel, yMap);
-      renderOneChart('sys', 'cSys', ms, sel, ySys);
+      renderOneChart('loss', 'cLoss', ms, sel, 'loss 系');
+      renderOneChart('map', 'cMap', ms, sel, 'mAP');
+      renderOneChart('sys', 'cSys', ms, sel, 'memory / lr / time …');
     }
 
     function rebuildCheckboxes(available) {
       const box = document.getElementById('metricChecks');
       if (!available || !available.length) {
-        box.innerHTML = '<span class="muted">（scalars 未生成）</span>';
+        box.innerHTML = '<span class="muted">（log.json 未生成）</span>';
         return;
       }
       let saved = null;
@@ -463,16 +421,16 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
     }
 
     async function poll() {
-      const r = await fetch('/api/train/state');
+      const r = await fetch('/api/ppal-train/state');
       const j = await r.json();
       lastState = j;
       if (Array.isArray(j.default_metrics) && j.default_metrics.length) defaultMetrics = j.default_metrics;
       const st = j.status || 'idle';
-      document.getElementById('status').textContent = '状態: ' + st;
-      document.getElementById('status').className = 'status ' + (st === 'failed' ? 'err' : (st === 'completed' ? 'ok' : ''));
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = '状態: ' + st + (j.error ? ' — ' + j.error : '');
+      statusEl.className = 'status ' + (st === 'failed' ? 'err' : (st === 'completed' ? 'ok' : ''));
       document.getElementById('workdir').textContent = j.work_dir ? ('work_dir: ' + j.work_dir) : '';
-      document.getElementById('scalarpath').textContent = j.scalars_path ? ('scalars: ' + j.scalars_path) : '';
-      if (j.error) document.getElementById('status').textContent += ' — ' + j.error;
+      document.getElementById('logjsonpath').textContent = j.log_json_path ? ('log.json: ' + j.log_json_path) : '';
       document.getElementById('log').textContent = (j.lines_tail || []).join('\\n');
       const logEl = document.getElementById('log');
       logEl.scrollTop = logEl.scrollHeight;
@@ -486,28 +444,33 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
       renderChartsFromState(j);
     }
 
-    document.getElementById('train_sources').addEventListener('change', scheduleCategoryRefresh);
-    document.getElementById('val_sources').addEventListener('change', scheduleCategoryRefresh);
+    document.getElementById('labeled_source').addEventListener('change', scheduleCategoryRefresh);
+    document.getElementById('val_source').addEventListener('change', scheduleCategoryRefresh);
 
     document.getElementById('btnStart').addEventListener('click', async () => {
-      const train_sources = getSelectedSources('train_sources');
-      const val_sources = getSelectedSources('val_sources');
-      if (!train_sources.length) { alert('Train データを 1 件以上選択してください'); return; }
-      if (!val_sources.length) { alert('Val データを 1 件以上選択してください'); return; }
-      const cfgSel = document.getElementById('config_path').value;
+      const labeled_source = getSelectedLabeledSource();
+      const val_source = getSelectedValSource();
+      if (!labeled_source) { alert('Labeled データを選択してください'); return; }
+      if (!val_source) { alert('Val データを選択してください'); return; }
+      const classes = getSelectedCategories();
+      if (!classes.length) { alert('カテゴリを 1 つ以上選択してください'); return; }
       const body = {
-        train_sources: train_sources,
-        val_sources: val_sources,
+        labeled_source,
+        val_source,
+        classes,
         max_epochs: parseInt(document.getElementById('max_epochs').value, 10),
         lr: parseFloat(document.getElementById('lr').value),
         batch_size: parseInt(document.getElementById('batch_size').value, 10),
       };
-      if (cfgSel) body.config_path = cfgSel;
       const pw = document.getElementById('pretrained').value;
       if (pw) body.pretrained_work_dir = pw;
       const wdn = document.getElementById('work_dir_suffix').value.trim();
       if (wdn) body.work_dir_name = wdn;
-      const r = await fetch('/api/train/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch('/api/ppal-train/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
       const j = await r.json();
       if (!r.ok) {
         alert(typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail));
@@ -518,11 +481,14 @@ TRAIN_PAGE_HTML = """<!DOCTYPE html>
     });
 
     document.getElementById('btnStop').addEventListener('click', async () => {
-      await fetch('/api/train/stop', { method: 'POST' });
+      await fetch('/api/ppal-train/stop', { method: 'POST' });
       poll();
     });
 
-    Promise.all([loadDatasets(), loadMmdetConfigs(), loadPretrainedModels(), loadDefaultWorkDirName()]).then(() => { poll(); setInterval(poll, 1200); });
+    Promise.all([loadDatasets(), loadPretrainedModels(), loadDefaults(), loadDefaultWorkDirName()]).then(() => {
+      poll();
+      setInterval(poll, 1200);
+    });
   </script>
 </body>
 </html>
