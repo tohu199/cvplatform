@@ -4,3 +4,6 @@
 [submodule "third_party/cvat"]
 	path = third_party/cvat
 	url = git@github.com:tohu199/cvat.git
+[submodule "third_party/PPAL"]
+	path = third_party/PPAL
+	url = git@github.com:tohu199/PPAL.git
