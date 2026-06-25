@@ -103,13 +103,17 @@ class SuggestCategoriesRequest(BaseModel):
 
 
 class PpalSuggestCategoriesRequest(BaseModel):
-    labeled_source: TrainDataSourceItem
-    val_source: TrainDataSourceItem
+    labeled_sources: List[TrainDataSourceItem] = Field(default_factory=list)
+    val_sources: List[TrainDataSourceItem] = Field(default_factory=list)
 
 
 class PpalTrainStartRequest(BaseModel):
-    labeled_source: TrainDataSourceItem
-    val_source: TrainDataSourceItem
+    labeled_sources: List[TrainDataSourceItem] = Field(
+        ..., min_length=1, description="Labeled データ（複数可・別エクスポート可）"
+    )
+    val_sources: List[TrainDataSourceItem] = Field(
+        ..., min_length=1, description="検証データ（複数可・別エクスポート可）"
+    )
     max_epochs: int = Field(26, ge=1, le=10000)
     lr: float = Field(0.01, gt=0, le=100.0)
     batch_size: int = Field(1, ge=1, le=64)
@@ -440,8 +444,8 @@ def api_ppal_train_default_work_dir() -> dict:
 def api_ppal_train_suggest_categories(body: PpalSuggestCategoriesRequest) -> dict:
     try:
         return suggest_categories_for_ppal(
-            body.labeled_source.model_dump(),
-            body.val_source.model_dump(),
+            [s.model_dump() for s in body.labeled_sources],
+            [s.model_dump() for s in body.val_sources],
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -469,8 +473,8 @@ def api_ppal_train_state() -> dict:
 def api_ppal_train_start(body: PpalTrainStartRequest) -> dict:
     try:
         job = ppal_train_manager.start(
-            labeled_source=body.labeled_source.model_dump(),
-            val_source=body.val_source.model_dump(),
+            labeled_sources=[s.model_dump() for s in body.labeled_sources],
+            val_sources=[s.model_dump() for s in body.val_sources],
             max_epochs=body.max_epochs,
             lr=body.lr,
             batch_size=body.batch_size,

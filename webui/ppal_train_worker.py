@@ -9,17 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from webui.ppal_defaults import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_EVAL_INTERVAL,
-    DEFAULT_LOG_INTERVAL,
-    DEFAULT_LR,
-    DEFAULT_LR_STEP_EPOCH,
-    DEFAULT_LR_WARMUP_ITERS,
-    DEFAULT_MAX_EPOCHS,
-    DEFAULT_PPAL_CONFIG_REL,
-    DEFAULT_WORKERS_PER_GPU,
-)
+from webui.ppal_defaults import DEFAULT_PPAL_CONFIG_REL
 
 
 def _repo_root() -> Path:
@@ -39,8 +29,7 @@ def _resolve_ppal_python() -> str:
 
 def _prepare_coco_json(
     ann_path: Path,
-    work_dir: Path,
-    out_name: str,
+    out_path: Path,
     class_names: Optional[List[str]],
     *,
     require_annotations: bool,
@@ -54,18 +43,17 @@ def _prepare_coco_json(
         raise ValueError(f"アノテーションが 0 件です: {ann_path}")
     if not raw.get("images"):
         raise ValueError(f"画像が 0 件です: {ann_path}")
-    out = work_dir / out_name
-    out.write_text(json.dumps(raw), encoding="utf-8")
-    return out
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(raw), encoding="utf-8")
+    return out_path
 
 
-def _prepare_unlabeled_json(labeled_path: Path, work_dir: Path) -> Path:
-    labeled = json.loads(labeled_path.read_text(encoding="utf-8"))
+def _prepare_unlabeled_json(categories: List[dict], work_dir: Path) -> Path:
     out = work_dir / "unlabeled.json"
     payload = {
         "images": [],
         "annotations": [],
-        "categories": labeled.get("categories") or [],
+        "categories": categories,
     }
     out.write_text(json.dumps(payload), encoding="utf-8")
     return out
@@ -79,95 +67,68 @@ def _resolve_img_prefix(data_root: Path, img_prefix: str) -> str:
     return prefix
 
 
-def _format_cfg_classes(class_names: List[str]) -> str:
-    inner = ",".join(repr(name) for name in class_names)
-    return f"({inner},)" if len(class_names) == 1 else f"({inner})"
+def _legacy_sources(spec: dict, key: str) -> List[Dict[str, str]]:
+    dr = spec.get(f"{key}_data_root")
+    ann = spec.get(f"{key}_ann_file")
+    prefix = spec.get(f"{key}_img_prefix")
+    if not dr or not ann or not prefix:
+        return []
+    return [{"data_root": dr, "ann_file": ann, "img_prefix": prefix}]
 
 
-def _lr_step_for_epochs(max_epochs: int) -> int:
-    if max_epochs == DEFAULT_MAX_EPOCHS:
-        return DEFAULT_LR_STEP_EPOCH
-    return max(1, round(max_epochs * DEFAULT_LR_STEP_EPOCH / DEFAULT_MAX_EPOCHS))
+def _sources_from_spec(spec: dict, key: str) -> List[Dict[str, str]]:
+    rows = spec.get(f"{key}_sources")
+    if isinstance(rows, list) and rows:
+        return rows
+    return _legacy_sources(spec, key)
 
 
-def _master_port(work_dir: Path) -> int:
-    return 29500 + (hash(str(work_dir.resolve())) % 500)
-
-
-def _build_cfg_options(
-    spec: Dict[str, Any],
-    labeled: Path,
-    unlabeled: Path,
-    val_json: Path,
-    train_img_prefix: str,
-    val_img_prefix: str,
-) -> List[str]:
-    classes = spec.get("classes") or []
-    num_classes = len(classes)
-    if num_classes < 1:
-        raise ValueError("classes が空です。")
-
-    max_epochs = int(spec.get("max_epochs", DEFAULT_MAX_EPOCHS))
-    lr = float(spec.get("lr", DEFAULT_LR))
-    batch_size = int(spec.get("batch_size", DEFAULT_BATCH_SIZE))
-    lr_step = _lr_step_for_epochs(max_epochs)
-    classes_opt = _format_cfg_classes(classes)
-
-    return [
-        f"labeled_data={labeled}",
-        f"unlabeled_data={unlabeled}",
-        f"data.train.ann_file={labeled}",
-        f"data.train.img_prefix={train_img_prefix}",
-        f"data.train.classes={classes_opt}",
-        f"data.val.ann_file={val_json}",
-        f"data.val.img_prefix={val_img_prefix}",
-        f"data.val.classes={classes_opt}",
-        f"data.test.ann_file={val_json}",
-        f"data.test.img_prefix={val_img_prefix}",
-        f"data.test.classes={classes_opt}",
-        f"model.bbox_head.num_classes={num_classes}",
-        f"runner.max_epochs={max_epochs}",
-        f"data.samples_per_gpu={batch_size}",
-        f"data.workers_per_gpu={DEFAULT_WORKERS_PER_GPU}",
-        f"optimizer.lr={lr}",
-        f"lr_config.step=[{lr_step}]",
-        f"lr_config.warmup_iters={DEFAULT_LR_WARMUP_ITERS}",
-        f"checkpoint_config.interval={max_epochs}",
-        f"evaluation.interval={DEFAULT_EVAL_INTERVAL}",
-        f"evaluation.metric=bbox",
-        f"log_config.interval={DEFAULT_LOG_INTERVAL}",
-    ]
-
-
-def _validate_ppal_checkpoint(path: Path) -> None:
-    import torch
-
-    ckpt = torch.load(str(path), map_location="cpu")
-    state = ckpt.get("state_dict", ckpt)
-    if "bbox_head.class_quality" not in state:
-        raise ValueError(
-            "学習結果に bbox_head.class_quality がありません。"
-            " PPAL RetinaQualityEMAHead での学習に失敗した可能性があります。"
+def _prepare_labeled_sources(
+    sources: List[Dict[str, str]],
+    work_dir: Path,
+    classes: Optional[List[str]],
+) -> List[Dict[str, str]]:
+    prepared: List[Dict[str, str]] = []
+    categories: List[dict] = []
+    for i, source in enumerate(sources):
+        data_root = Path(source["data_root"]).resolve()
+        ann_path = data_root / source["ann_file"]
+        if not ann_path.is_file():
+            raise FileNotFoundError(f"labeled アノテーションが見つかりません: {ann_path}")
+        out = work_dir / "sources" / f"labeled_{i}.json"
+        _prepare_coco_json(ann_path, out, classes, require_annotations=True)
+        if not categories:
+            raw = json.loads(out.read_text(encoding="utf-8"))
+            categories = raw.get("categories") or []
+        prepared.append(
+            {
+                "ann_file": str(out.resolve()),
+                "img_prefix": _resolve_img_prefix(data_root, source["img_prefix"]),
+            }
         )
+    return prepared
 
 
-def _find_checkpoint(work_dir: Path) -> Path:
-    latest = work_dir / "latest.pth"
-    if latest.is_file() or latest.is_symlink():
-        return latest.resolve()
-    candidates = sorted(work_dir.glob("epoch_*.pth"), key=lambda p: p.stat().st_mtime)
-    if candidates:
-        return candidates[-1].resolve()
-    raise FileNotFoundError(f"checkpoint が見つかりません: {work_dir}")
-
-
-def _load_source(spec: Dict[str, Any], key: str) -> tuple[Path, str, str]:
-    data_root = Path(spec[f"{key}_data_root"]).resolve()
-    ann_path = data_root / spec[f"{key}_ann_file"]
-    if not ann_path.is_file():
-        raise FileNotFoundError(f"{key} アノテーションが見つかりません: {ann_path}")
-    img_prefix = _resolve_img_prefix(data_root, spec[f"{key}_img_prefix"])
-    return data_root, str(ann_path), img_prefix
+def _prepare_val_sources(
+    sources: List[Dict[str, str]],
+    work_dir: Path,
+    classes: Optional[List[str]],
+) -> List[Dict[str, str]]:
+    prepared: List[Dict[str, str]] = []
+    for i, source in enumerate(sources):
+        data_root = Path(source["data_root"]).resolve()
+        ann_path = data_root / source["ann_file"]
+        if not ann_path.is_file():
+            raise FileNotFoundError(f"val アノテーションが見つかりません: {ann_path}")
+        out = work_dir / "sources" / f"val_{i}.json"
+        _prepare_coco_json(ann_path, out, classes, require_annotations=True)
+        prepared.append(
+            {
+                "ann_file": str(out.resolve()),
+                "img_prefix": _resolve_img_prefix(data_root, source["img_prefix"]),
+            }
+        )
+    return prepared
 
 
 def main() -> int:
@@ -183,69 +144,57 @@ def main() -> int:
     work_dir = Path(spec["work_dir"]).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    _, labeled_ann, train_img_prefix = _load_source(spec, "labeled")
-    _, val_ann, val_img_prefix = _load_source(spec, "val")
+    labeled_sources = _sources_from_spec(spec, "labeled")
+    val_sources = _sources_from_spec(spec, "val")
+    if not labeled_sources:
+        raise ValueError("labeled_sources が空です。")
+    if not val_sources:
+        raise ValueError("val_sources が空です。")
+
     classes = spec.get("classes")
+    labeled_prepared = _prepare_labeled_sources(labeled_sources, work_dir, classes)
+    val_prepared = _prepare_val_sources(val_sources, work_dir, classes)
 
-    labeled = _prepare_coco_json(
-        Path(labeled_ann), work_dir, "labeled.json", classes, require_annotations=True
-    )
-    val_json = _prepare_coco_json(
-        Path(val_ann), work_dir, "val.json", classes, require_annotations=True
-    )
-    unlabeled = _prepare_unlabeled_json(labeled, work_dir)
-
-    config_rel = (spec.get("config_path") or DEFAULT_PPAL_CONFIG_REL).strip()
-    config_path = (ppal_root / config_rel).resolve()
-    if not config_path.is_file():
-        raise FileNotFoundError(f"PPAL config が見つかりません: {config_path}")
-
-    cfg_options = _build_cfg_options(
-        spec, labeled, unlabeled, val_json, train_img_prefix, val_img_prefix
+    first_labeled = json.loads(Path(labeled_prepared[0]["ann_file"]).read_text(encoding="utf-8"))
+    unlabeled = _prepare_unlabeled_json(
+        first_labeled.get("categories") or [], work_dir
     )
 
-    port = _master_port(work_dir)
-    cmd: List[str] = [
+    launch_spec: Dict[str, Any] = {
+        "config_path": spec.get("config_path") or DEFAULT_PPAL_CONFIG_REL,
+        "work_dir": str(work_dir),
+        "classes": classes,
+        "max_epochs": spec.get("max_epochs"),
+        "lr": spec.get("lr"),
+        "batch_size": spec.get("batch_size"),
+        "labeled_sources": labeled_sources,
+        "val_sources": val_sources,
+        "labeled_prepared": labeled_prepared,
+        "val_prepared": val_prepared,
+        "labeled_data": str((work_dir / "sources" / "labeled_0.json").resolve()),
+        "unlabeled_data": str(unlabeled.resolve()),
+    }
+    if spec.get("resume_from"):
+        launch_spec["resume_from"] = spec["resume_from"]
+
+    launch_spec_path = work_dir / "webui_ppal_launch_spec.json"
+    launch_spec_path.write_text(json.dumps(launch_spec, indent=2), encoding="utf-8")
+
+    cmd = [
         _resolve_ppal_python(),
+        "-u",
         "-m",
-        "torch.distributed.launch",
-        "--nproc_per_node=1",
-        f"--master_port={port}",
-        "tools/train.py",
-        str(config_path),
-        "--work-dir",
-        str(work_dir),
-        "--launcher",
-        "pytorch",
-        "--cfg-options",
-        *cfg_options,
+        "webui.ppal_train_launch",
+        str(launch_spec_path),
     ]
-
-    resume_from = spec.get("resume_from")
-    if resume_from:
-        ckpt = Path(resume_from).resolve()
-        if not ckpt.is_file():
-            raise FileNotFoundError(f"resume checkpoint が見つかりません: {ckpt}")
-        cmd.extend(["--resume-from", str(ckpt)])
-
-    print("PPAL train command:", " ".join(cmd), flush=True)
+    print("PPAL launch command:", " ".join(cmd), flush=True)
     env = os.environ.copy()
+    root = str(_repo_root())
     ppal = str(ppal_root)
-    env["PYTHONPATH"] = ppal + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = root + os.pathsep + ppal + os.pathsep + env.get("PYTHONPATH", "")
 
-    proc = subprocess.run(
-        cmd,
-        cwd=str(ppal_root),
-        env=env,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return proc.returncode
-
-    ckpt_path = _find_checkpoint(work_dir)
-    _validate_ppal_checkpoint(ckpt_path)
-    print(f"PPAL checkpoint OK: {ckpt_path}", flush=True)
-    return 0
+    proc = subprocess.run(cmd, cwd=str(ppal_root), env=env, check=False)
+    return proc.returncode
 
 
 if __name__ == "__main__":

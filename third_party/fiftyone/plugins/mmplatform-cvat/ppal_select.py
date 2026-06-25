@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import fiftyone as fo
 
+from .cvat_send import CVAT_SENT_TAG
 from .kcenter import DEFAULT_SELECT, KCenterProgress
 
 PPAL_RANK_FIELD = "ppal_rank"
@@ -115,6 +116,34 @@ class PpalOrderResult:
     ordered_ids: List[str]
     checkpoint: str
     pool_size: int
+    unsent_count: int = 0
+    sent_count: int = 0
+
+
+def _has_cvat_sent_tag(sample: fo.Sample) -> bool:
+    return CVAT_SENT_TAG in (sample.tags or [])
+
+
+def _unsent_view(
+    view: fo.core.collections.SampleCollection,
+) -> fo.core.collections.SampleCollection:
+    return view.match_tags(CVAT_SENT_TAG, bool=False)
+
+
+def _sent_ids_in_view_order(
+    view: fo.core.collections.SampleCollection,
+) -> List[str]:
+    return [sample.id for sample in view if _has_cvat_sent_tag(sample)]
+
+
+def _merge_ppal_order(
+    ppal_ordered_unsent_ids: Sequence[str],
+    sent_ids: Sequence[str],
+) -> List[str]:
+    """Place CVAT-sent samples after PPAL-ranked unsent samples."""
+    unsent = list(ppal_ordered_unsent_ids)
+    sent = [sample_id for sample_id in sent_ids if sample_id not in set(unsent)]
+    return unsent + sent
 
 
 def ppal_root() -> Path:
@@ -417,16 +446,38 @@ def compute_ppal_order(
     if not PPAL_RUNNER.is_file():
         raise FileNotFoundError(f"PPAL runner が見つかりません: {PPAL_RUNNER}")
 
-    _ensure_view_metadata(view, progress=progress)
-    sample_records = _collect_sample_records(view, label_field=label_field)
+    sent_ids = _sent_ids_in_view_order(view)
+    unsent_view = _unsent_view(view)
+    unsent_count = unsent_view.count()
+    sent_count = len(sent_ids)
+
+    if unsent_count == 0:
+        raise ValueError(
+            f"PPAL 対象の未送信画像がありません。"
+            f" `{CVAT_SENT_TAG}` タグ付き {sent_count} 枚は PPAL から除外されます。"
+            " 新しい画像を追加するか、未送信の View に切り替えてください。"
+        )
+
+    _ensure_view_metadata(unsent_view, progress=progress)
+    sample_records = _collect_sample_records(unsent_view, label_field=label_field)
     if not sample_records:
-        return PpalOrderResult(ordered_ids=[], checkpoint=checkpoint, pool_size=0)
+        raise ValueError("未送信画像の PPAL 用レコードを作成できませんでした。")
 
     if progress is not None:
         progress.set(0.05, "PPAL runner を起動中…", force=True)
         progress.log(f"checkpoint: {checkpoint}")
-        progress.log(f"対象サンプル数: {len(sample_records)}")
+        progress.log(f"PPAL 対象（未送信）: {unsent_count} 枚")
+        if sent_count:
+            progress.log(
+                f"CVAT 送信済み（PPAL 除外・末尾へ）: {sent_count} 枚"
+                f"（タグ: {CVAT_SENT_TAG}）"
+            )
         progress.log("モード: image-only（COCO oracle 不要）")
+        progress.log(
+            "注意: PPAL は GPU で RetinaNet を 2 回推論します。"
+            " WSL が固まる場合は FiftyOne 以外の GPU 利用を止め、"
+            " .wslconfig の memory 上限を確認してください。"
+        )
 
     spec: Dict[str, object] = {
         "checkpoint": checkpoint,
@@ -474,25 +525,36 @@ def compute_ppal_order(
         if payload.get("error"):
             raise RuntimeError(str(payload["error"]))
 
-        ordered_ids = [str(x) for x in payload.get("ordered_fiftyone_ids", [])]
+        ordered_unsent_ids = [
+            str(x) for x in payload.get("ordered_fiftyone_ids", [])
+        ]
         for line in payload.get("log", []):
             if progress is not None:
                 progress.log(str(line))
 
-        if len(ordered_ids) != len(sample_records):
+        if len(ordered_unsent_ids) != len(sample_records):
             raise RuntimeError(
                 "PPAL の順位付け結果とサンプル数が一致しません "
-                f"({len(ordered_ids)} != {len(sample_records)})"
+                f"({len(ordered_unsent_ids)} != {len(sample_records)})"
             )
+
+        ordered_ids = _merge_ppal_order(ordered_unsent_ids, sent_ids)
 
         if progress is not None:
             progress.set(0.97, "順位を保存中…")
             progress.log(f"{PPAL_RANK_FIELD} フィールドへ順位を保存")
+            if sent_count:
+                progress.log(
+                    f"並び順: 未送信 {unsent_count} 枚（PPAL 順）"
+                    f" + 送信済み {sent_count} 枚（末尾）"
+                )
 
         return PpalOrderResult(
             ordered_ids=ordered_ids,
             checkpoint=checkpoint,
             pool_size=int(payload.get("pool_size", 0)),
+            unsent_count=unsent_count,
+            sent_count=sent_count,
         )
     finally:
         try:

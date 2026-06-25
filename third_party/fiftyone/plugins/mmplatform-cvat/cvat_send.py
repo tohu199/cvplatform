@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
-from typing import List, Sequence
+from dataclasses import dataclass
+from typing import List, Sequence, Set
 
 import fiftyone as fo
+
+CVAT_SENT_TAG = "cvat_sent"
 
 
 def default_anno_key() -> str:
@@ -40,6 +43,67 @@ def validate_cvat_env() -> None:
             " third_party/fiftyone/personal_info.sh を source するか、"
             " launch_app.py を起動する前に export してください。"
         )
+
+
+@dataclass(frozen=True)
+class CvatSentTagSyncResult:
+    total_sent: int
+    runs_scanned: int
+
+
+def _is_cvat_annotation_run(dataset: fo.Dataset, anno_key: str) -> bool:
+    try:
+        info = dataset.get_annotation_info(anno_key)
+        config = info.config
+        method = getattr(config, "method", None)
+        if method is None and isinstance(config, dict):
+            method = config.get("method")
+        return method == "cvat"
+    except Exception:
+        return False
+
+
+def collect_cvat_sent_sample_ids(dataset: fo.Dataset) -> Set[str]:
+    """Return sample IDs that appear in any CVAT annotation run on the dataset."""
+    sent: Set[str] = set()
+    for anno_key in dataset.list_annotation_runs():
+        if not _is_cvat_annotation_run(dataset, anno_key):
+            continue
+        try:
+            view = dataset.load_annotation_view(anno_key)
+            sent.update(sample.id for sample in view)
+        except Exception:
+            continue
+    return sent
+
+
+def sync_cvat_sent_tags(dataset: fo.Dataset) -> CvatSentTagSyncResult:
+    """Tag samples sent to CVAT using annotation-run history (no load_annotations)."""
+    sent_ids = collect_cvat_sent_sample_ids(dataset)
+    runs_scanned = sum(
+        1
+        for key in dataset.list_annotation_runs()
+        if _is_cvat_annotation_run(dataset, key)
+    )
+
+    if sent_ids:
+        dataset.select(list(sent_ids)).tag_samples(CVAT_SENT_TAG)
+
+    unsent = dataset.exclude(list(sent_ids)) if sent_ids else dataset
+    if unsent.count() > 0:
+        unsent.untag_samples(CVAT_SENT_TAG)
+
+    return CvatSentTagSyncResult(total_sent=len(sent_ids), runs_scanned=runs_scanned)
+
+
+def cvat_sent_status_message(dataset: fo.Dataset) -> str:
+    sent_ids = collect_cvat_sent_sample_ids(dataset)
+    total = dataset.count()
+    unsent = max(total - len(sent_ids), 0)
+    return (
+        f"CVAT 送信済み: {len(sent_ids)} / {total} 枚"
+        f"（タグ `{CVAT_SENT_TAG}`、未送信 {unsent} 枚）"
+    )
 
 
 def _clear_annotation_run(dataset: fo.Dataset, anno_key: str) -> bool:
@@ -112,8 +176,5 @@ def send_samples_to_cvat(
                 pass
         raise RuntimeError(format_cvat_send_error(exc)) from exc
 
-    if cleared:
-        # Stale run from a prior failed attempt was removed before this send.
-        pass
-
+    sync_cvat_sent_tags(dataset)
     return anno_key

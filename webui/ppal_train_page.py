@@ -34,7 +34,8 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
     #work_dir_suffix { flex: 1 1 12rem; min-width: 10rem; border-radius: 0 4px 4px 0; }
     #categoryChecks { margin-top: 0.5rem; padding: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; max-height: 9rem; overflow: auto; }
     #categoryChecks label { display: inline-block; margin: 0 0.75rem 0.35rem 0; font-weight: 400; font-size: 0.88rem; }
-    #labeled_source, #val_source { width: 100%; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+    #labeled_sources, #val_sources { width: 100%; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+    .source-select { min-height: 7rem; }
     #metricChecks { margin-top: 0.5rem; padding: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; max-height: 10rem; overflow: auto; }
     #metricChecks label { display: inline-block; margin: 0 0.75rem 0.35rem 0; font-weight: 400; font-size: 0.88rem; }
   </style>
@@ -43,7 +44,8 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
   <nav><a href="/hub">統括</a><a href="/">CVAT export</a><a href="/fiftyone-upload">FiftyOne upload</a><a href="/train">YOLOX 学習</a><a href="/ppal-train"><strong>PPAL 学習</strong></a><a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
   <h1>PPAL RetinaNet 学習</h1>
   <p class="muted">
-    CVAT でアノテーション済みの <strong>labeled / val データを各 1 件</strong> で PPAL 用 RetinaNet を学習します。
+    CVAT でアノテーション済みの <strong>labeled / val データ</strong>で PPAL 用 RetinaNet を学習します。
+    アクティブラーニングでは <strong>過去ラウンド + 今回</strong>の labeled export を複数選択してください（YOLOX 学習と同様に ConcatDataset で結合）。
     ハイパーパラメータの既定値は PPAL 本家（<code>retinanet_26e.py</code> / <code>ppal_retinanet_coco.py</code>）に合わせています。
     出力は <code>third_party/PPAL/work_dirs/web_ppal_*</code> に保存され、FiftyOne の PPAL サンプリングで利用できます。
   </p>
@@ -56,15 +58,15 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
   <p class="muted">空欄のときは自動生成。接尾辞は英数字と <code>_</code> <code>-</code> のみ。</p>
 
   <section class="data-panel">
-    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">Labeled データ（1 件）</h2>
-    <p class="muted">学習用アノテーション（CVAT エクスポート COCO）。</p>
-    <select id="labeled_source" aria-label="Labeled データ"></select>
+    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">Labeled データ</h2>
+    <p class="muted">学習用アノテーション（CVAT エクスポート COCO）。Ctrl / Cmd + クリックで複数選択。</p>
+    <select id="labeled_sources" class="source-select" multiple aria-label="Labeled データ"></select>
   </section>
 
   <section class="data-panel">
-    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">Val データ（1 件）</h2>
-    <p class="muted">検証用アノテーション。学習中に bbox mAP を評価します。</p>
-    <select id="val_source" aria-label="Val データ"></select>
+    <h2 style="margin:0 0 0.5rem;font-size:1.05rem">Val データ</h2>
+    <p class="muted">検証用アノテーション。複数選択可（各 export の画像パスを維持して ConcatDataset で評価）。</p>
+    <select id="val_sources" class="source-select" multiple aria-label="Val データ"></select>
   </section>
 
   <section class="data-panel">
@@ -134,19 +136,22 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
       return opts;
     }
 
-    function getSelectedLabeledSource() {
-      return getSelectedSource('labeled_source');
-    }
-
-    function getSelectedValSource() {
-      return getSelectedSource('val_source');
-    }
-
-    function getSelectedSource(selectId) {
+    function getSelectedSources(selectId) {
       const el = document.getElementById(selectId);
-      const v = el.value;
-      if (!v) return null;
-      try { return JSON.parse(v); } catch (e) { return null; }
+      const out = [];
+      for (const opt of el.selectedOptions) {
+        if (!opt.value) continue;
+        try { out.push(JSON.parse(opt.value)); } catch (e) {}
+      }
+      return out;
+    }
+
+    function getSelectedLabeledSources() {
+      return getSelectedSources('labeled_sources');
+    }
+
+    function getSelectedValSources() {
+      return getSelectedSources('val_sources');
     }
 
     function getSelectedCategories() {
@@ -170,30 +175,28 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
         const inp = document.createElement('input');
         inp.type = 'checkbox';
         inp.dataset.category = row.name;
+        const tags = [];
+        if (row.in_train) tags.push('labeled');
+        if (row.in_val) tags.push('val');
         inp.checked = prev.size ? prev.has(row.name) : defaultSel.has(row.name);
         lab.appendChild(inp);
-        lab.appendChild(document.createTextNode(' ' + row.name));
+        lab.appendChild(document.createTextNode(' ' + row.name + (tags.length ? ' (' + tags.join(', ') + ')' : '')));
         box.appendChild(lab);
       }
     }
 
     async function refreshSuggestedCategories() {
-      const labeled_source = getSelectedLabeledSource();
-      const val_source = getSelectedValSource();
-      if (!labeled_source && !val_source) {
+      const labeled_sources = getSelectedLabeledSources();
+      const val_sources = getSelectedValSources();
+      if (!labeled_sources.length && !val_sources.length) {
         renderCategoryChecks({ categories: [], names: [], default_selected: [] });
-        return;
-      }
-      if (!labeled_source || !val_source) {
-        renderCategoryChecks({ categories: [], names: [], default_selected: [] });
-        document.getElementById('categoryChecks').innerHTML = '<span class="muted">（Labeled と Val の両方を選択してください）</span>';
         return;
       }
       try {
         const r = await fetch('/api/ppal-train/suggest-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ labeled_source, val_source }),
+          body: JSON.stringify({ labeled_sources, val_sources }),
         });
         const j = await r.json();
         if (!r.ok) {
@@ -222,10 +225,6 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
         el.appendChild(opt);
         return;
       }
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = '— 選択してください —';
-      el.appendChild(placeholder);
       for (const o of sourceOptions) {
         const opt = document.createElement('option');
         opt.value = o.value;
@@ -236,8 +235,8 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
 
     function populateSourceSelects() {
       const opts = buildSourceOptions(datasets);
-      fillSourceSelect(document.getElementById('labeled_source'), opts);
-      fillSourceSelect(document.getElementById('val_source'), opts);
+      fillSourceSelect(document.getElementById('labeled_sources'), opts);
+      fillSourceSelect(document.getElementById('val_sources'), opts);
       scheduleCategoryRefresh();
     }
 
@@ -444,19 +443,19 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
       renderChartsFromState(j);
     }
 
-    document.getElementById('labeled_source').addEventListener('change', scheduleCategoryRefresh);
-    document.getElementById('val_source').addEventListener('change', scheduleCategoryRefresh);
+    document.getElementById('labeled_sources').addEventListener('change', scheduleCategoryRefresh);
+    document.getElementById('val_sources').addEventListener('change', scheduleCategoryRefresh);
 
     document.getElementById('btnStart').addEventListener('click', async () => {
-      const labeled_source = getSelectedLabeledSource();
-      const val_source = getSelectedValSource();
-      if (!labeled_source) { alert('Labeled データを選択してください'); return; }
-      if (!val_source) { alert('Val データを選択してください'); return; }
+      const labeled_sources = getSelectedLabeledSources();
+      const val_sources = getSelectedValSources();
+      if (!labeled_sources.length) { alert('Labeled データを 1 件以上選択してください'); return; }
+      if (!val_sources.length) { alert('Val データを 1 件以上選択してください'); return; }
       const classes = getSelectedCategories();
       if (!classes.length) { alert('カテゴリを 1 つ以上選択してください'); return; }
       const body = {
-        labeled_source,
-        val_source,
+        labeled_sources,
+        val_sources,
         classes,
         max_epochs: parseInt(document.getElementById('max_epochs').value, 10),
         lr: parseFloat(document.getElementById('lr').value),

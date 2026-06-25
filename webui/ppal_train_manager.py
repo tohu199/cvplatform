@@ -29,6 +29,7 @@ from webui.train_manager import (
     EXPORTS_DIR,
     _is_under,
     _normalize_ann_relpath,
+    _resolve_data_sources,
 )
 
 PPAL_ROOT = ROOT / "third_party" / "PPAL"
@@ -169,6 +170,14 @@ def resolve_export_source(raw: Dict[str, str], *, label: str) -> Dict[str, str]:
     }
 
 
+def resolve_labeled_sources(items: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
+    return _resolve_data_sources(items, label="labeled データ")
+
+
+def resolve_val_sources(items: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
+    return _resolve_data_sources(items, label="val データ")
+
+
 def resolve_labeled_source(raw: Dict[str, str]) -> Dict[str, str]:
     return resolve_export_source(raw, label="labeled データ")
 
@@ -178,12 +187,16 @@ def resolve_val_source(raw: Dict[str, str]) -> Dict[str, str]:
 
 
 def suggest_categories_for_ppal(
-    labeled_source: Dict[str, str],
-    val_source: Dict[str, str],
+    labeled_sources: Sequence[Dict[str, str]],
+    val_sources: Sequence[Dict[str, str]],
 ) -> Dict[str, Any]:
-    labeled = resolve_labeled_source(labeled_source)
-    val = resolve_val_source(val_source)
-    return suggest_categories([labeled], [val])
+    labeled = (
+        resolve_labeled_sources(labeled_sources) if labeled_sources else []
+    )
+    val = resolve_val_sources(val_sources) if val_sources else []
+    if not labeled and not val:
+        return {"categories": [], "names": [], "default_selected": []}
+    return suggest_categories(labeled, val)
 
 
 def suggest_categories_for_labeled(labeled_source: Dict[str, str]) -> Dict[str, Any]:
@@ -289,8 +302,8 @@ class PpalTrainJobManager:
     def start(
         self,
         *,
-        labeled_source: Dict[str, str],
-        val_source: Dict[str, str],
+        labeled_sources: Sequence[Dict[str, str]],
+        val_sources: Sequence[Dict[str, str]],
         max_epochs: int = DEFAULT_MAX_EPOCHS,
         lr: float = DEFAULT_LR,
         batch_size: int = DEFAULT_BATCH_SIZE,
@@ -308,9 +321,9 @@ class PpalTrainJobManager:
                 " third_party/PPAL/.venv を作成してください（SETUP.md 参照）。"
             )
 
-        labeled = resolve_labeled_source(labeled_source)
-        val = resolve_val_source(val_source)
-        cat_info = suggest_categories([labeled], [val])
+        labeled_resolved = resolve_labeled_sources(labeled_sources)
+        val_resolved = resolve_val_sources(val_sources)
+        cat_info = suggest_categories(labeled_resolved, val_resolved)
         selected_classes = validate_selected_classes(
             classes, allowed_names=cat_info["names"]
         )
@@ -326,12 +339,8 @@ class PpalTrainJobManager:
 
         spec: Dict[str, Any] = {
             "config_path": DEFAULT_PPAL_CONFIG_REL,
-            "labeled_data_root": labeled["data_root"],
-            "labeled_ann_file": labeled["ann_file"],
-            "labeled_img_prefix": labeled["img_prefix"],
-            "val_data_root": val["data_root"],
-            "val_ann_file": val["ann_file"],
-            "val_img_prefix": val["img_prefix"],
+            "labeled_sources": labeled_resolved,
+            "val_sources": val_resolved,
             "classes": selected_classes,
             "max_epochs": max_epochs,
             "lr": lr,

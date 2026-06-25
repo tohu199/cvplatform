@@ -23,9 +23,12 @@ from .kcenter import (
     validate_selection_count,
 )
 from .cvat_send import (
+    CVAT_SENT_TAG,
     cvat_env_summary,
+    cvat_sent_status_message,
     default_anno_key,
     send_samples_to_cvat,
+    sync_cvat_sent_tags,
 )
 from .ppal_select import (
     PPAL_RANK_FIELD,
@@ -141,6 +144,11 @@ def _rank_field_for_mode(mode: str) -> str:
     return RANK_FIELD
 
 
+def _sync_cvat_sent_tags(ctx) -> None:
+    sync_cvat_sent_tags(ctx.dataset)
+    ctx.panel.state.cvat_sent_status = cvat_sent_status_message(ctx.dataset)
+
+
 class CvatKCenterPanel(foo.Panel):
     @property
     def config(self):
@@ -178,6 +186,7 @@ class CvatKCenterPanel(foo.Panel):
         )
         ctx.panel.state.kcenter_log = ctx.panel.get_state("kcenter_log", "")
         ctx.panel.state.show_kcenter_log = ctx.panel.get_state("show_kcenter_log", False)
+        _sync_cvat_sent_tags(ctx)
 
     def _progress_hooks(self, ctx) -> KCenterProgress:
         def on_progress(fraction: float, label: str) -> None:
@@ -251,11 +260,12 @@ class CvatKCenterPanel(foo.Panel):
         ctx.ops.notify(summary, variant="success")
 
     def _run_ppal(self, ctx, target, progress: KCenterProgress) -> None:
+        _sync_cvat_sent_tags(ctx)
         checkpoint = normalize_ppal_checkpoint(ctx.panel.state.ppal_checkpoint)
         count = target.count()
         progress.log("モード: PPAL")
         progress.log(f"checkpoint: {checkpoint}")
-        progress.log(f"対象サンプル数: {count}")
+        progress.log(f"View 内サンプル数: {count}")
 
         label_field = (ctx.panel.state.label_field or "ground_truth").strip()
         result = compute_ppal_order(
@@ -270,12 +280,17 @@ class CvatKCenterPanel(foo.Panel):
         sorted_view = target.sort_by(PPAL_RANK_FIELD)
         ctx.ops.set_view(sorted_view)
 
-        default_n = min(DEFAULT_SELECT, len(result.ordered_ids))
+        default_n = min(DEFAULT_SELECT, result.unsent_count)
         ctx.ops.set_selected_samples(result.ordered_ids[:default_n])
 
+        sent_note = (
+            f"、送信済み {result.sent_count} 枚は末尾"
+            if result.sent_count
+            else ""
+        )
         summary = (
-            f"{len(result.ordered_ids)} 枚を PPAL 順に並べ替え、"
-            f"先頭 {default_n} 枚を選択しました。"
+            f"未送信 {result.unsent_count} 枚を PPAL 順に並べ替え、"
+            f"先頭 {default_n} 枚を選択しました{sent_note}。"
             f"（DCUS pool: {result.pool_size}, checkpoint: {checkpoint}）"
         )
         progress.set(1.0, "完了", force=True)
@@ -325,10 +340,14 @@ class CvatKCenterPanel(foo.Panel):
         target = self._target_view(ctx)
         mode = ctx.panel.state.selection_mode or MODE_KCENTER
         rank_field = _rank_field_for_mode(mode)
-        ids = [sample.id for sample in target.sort_by(rank_field).limit(DEFAULT_SELECT)]
+        sorted_view = target.sort_by(rank_field)
+        if mode == MODE_PPAL:
+            _sync_cvat_sent_tags(ctx)
+            sorted_view = sorted_view.match_tags(CVAT_SENT_TAG, bool=False)
+        ids = [sample.id for sample in sorted_view.limit(DEFAULT_SELECT)]
         if not ids:
             ctx.ops.notify(
-                f"順位が未計算です。先に「並べ替え」を実行してください。（{mode}）",
+                f"順位が未計算か、未送信画像がありません。先に「並べ替え」を実行してください。（{mode}）",
                 variant="warning",
             )
             return
@@ -365,8 +384,10 @@ class CvatKCenterPanel(foo.Panel):
                 launch_editor=True,
             )
             ctx.panel.state.anno_key = _default_anno_key()
+            _sync_cvat_sent_tags(ctx)
             ctx.panel.state.status = (
-                f"CVAT 送信完了: anno_key='{used_key}', {len(selected)} 枚"
+                f"CVAT 送信完了: anno_key='{used_key}', {len(selected)} 枚。"
+                f" {ctx.panel.state.cvat_sent_status}"
             )
             ctx.ops.notify(ctx.panel.state.status, variant="success")
         except Exception as exc:
@@ -384,11 +405,16 @@ class CvatKCenterPanel(foo.Panel):
 ### CVAT 能動学習選定
 
 1. **選定モード**（k-center または PPAL）を選択
-2. **並べ替え** — 優先順に View を更新し先頭 {DEFAULT_SELECT} 枚を選択
+2. **並べ替え** — 未送信画像を PPAL 順に並べ、送信済み（`{CVAT_SENT_TAG}`）は末尾へ。先頭 {DEFAULT_SELECT} 枚（未送信）を選択
 3. グリッドで {MIN_SELECT} 枚以上を選択
 4. **CVAT に送信**
 
 {cvat_env_summary()}
+
+送信済み画像は annotation run 履歴から自動でタグ `{CVAT_SENT_TAG}` が付きます。
+App のフィルタで `tags` = `{CVAT_SENT_TAG}` とすると送信済みのみ表示できます。
+
+{ctx.panel.state.cvat_sent_status or cvat_sent_status_message(ctx.dataset)}
 
 {_python_version_note()}
 
@@ -586,8 +612,13 @@ class SendSelectedToCvat(foo.Operator):
             classes=classes,
             launch_editor=True,
         )
+        status = cvat_sent_status_message(ctx.dataset)
 
-        return {"message": f"Sent {len(selected)} samples to CVAT (anno_key={used_key})"}
+        return {
+            "message": (
+                f"Sent {len(selected)} samples to CVAT (anno_key={used_key}). {status}"
+            )
+        }
 
 
 class OpenCvatKcenterPanel(foo.Operator):
