@@ -1,6 +1,9 @@
 # HTML for /ppal-train (PPAL RetinaNet active-learning training).
 
-PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
+from webui.nav import BASE_STYLES, NAV_STYLES, webui_nav_html
+
+PPAL_TRAIN_PAGE_HTML = (
+"""<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
@@ -8,10 +11,10 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
   <title>PPAL 学習</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
-    :root { font-family: system-ui, sans-serif; }
-    body { max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.45; }
-    nav { margin-bottom: 1rem; font-size: 0.95rem; }
-    nav a { margin-right: 1rem; }
+"""
+    + BASE_STYLES
+    + NAV_STYLES
+    + """
     label { display: block; font-weight: 600; margin-top: 0.75rem; }
     input, select { max-width: 100%; padding: 0.35rem 0.5rem; font-size: 1rem; }
     input[type="number"] { max-width: 10rem; }
@@ -41,7 +44,9 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <nav><a href="/hub">統括</a><a href="/">CVAT export</a><a href="/fiftyone-upload">FiftyOne upload</a><a href="/train">YOLOX 学習</a><a href="/ppal-train"><strong>PPAL 学習</strong></a><a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+"""
+    + webui_nav_html(active="ppal_train")
+    + """
   <h1>PPAL RetinaNet 学習</h1>
   <p class="muted">
     CVAT でアノテーション済みの <strong>labeled / val データ</strong>で PPAL 用 RetinaNet を学習します。
@@ -492,3 +497,4 @@ PPAL_TRAIN_PAGE_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+)

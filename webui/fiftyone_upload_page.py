@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 
+from webui.nav import BASE_STYLES, NAV_STYLES, webui_nav_html
+
 
 def fiftyone_upload_page_html(
     *,
@@ -23,10 +25,8 @@ def fiftyone_upload_page_html(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FiftyOne 画像アップロード</title>
   <style>
-    :root {{ font-family: system-ui, sans-serif; }}
-    body {{ max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem 2rem; line-height: 1.5; }}
-    nav {{ margin-bottom: 1rem; font-size: 0.95rem; }}
-    nav a {{ margin-right: 1rem; }}
+    {BASE_STYLES}
+    {NAV_STYLES}
     label {{ display: block; font-weight: 600; margin-top: 0.85rem; }}
     input[type="text"], select {{ width: 100%; max-width: 28rem; padding: 0.4rem 0.5rem; font-size: 1rem; }}
     input[type="file"] {{ margin-top: 0.35rem; font-size: 0.95rem; }}
@@ -45,14 +45,7 @@ def fiftyone_upload_page_html(
   </style>
 </head>
 <body>
-  <nav>
-    <a href="/hub">統括</a>
-    <a href="/">CVAT export</a>
-    <a href="/fiftyone-upload"><strong>FiftyOne upload</strong></a>
-    <a href="/train">YOLOX 学習</a>
-    <a href="/ppal-train">PPAL 学習</a>
-    <a href="/nuclio-deploy">Nuclio デプロイ</a>
-  </nav>
+{webui_nav_html(active="fiftyone_upload")}
 
   <h1>FiftyOne 画像アップロード</h1>
   <p class="muted">

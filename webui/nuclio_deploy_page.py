@@ -1,16 +1,19 @@
 # HTML for /nuclio-deploy (separate from server.py for readability).
 
-NUCLIO_DEPLOY_PAGE_HTML = """<!DOCTYPE html>
+from webui.nav import BASE_STYLES, NAV_STYLES, webui_nav_html
+
+NUCLIO_DEPLOY_PAGE_HTML = (
+"""<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CVAT Nuclio デプロイ</title>
   <style>
-    :root { font-family: system-ui, sans-serif; }
-    body { max-width: 56rem; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.5; }
-    nav { margin-bottom: 1rem; font-size: 0.95rem; }
-    nav a { margin-right: 1rem; }
+"""
+    + BASE_STYLES
+    + NAV_STYLES
+    + """
     label { display: block; font-weight: 600; margin-top: 0.75rem; }
     select { width: 100%; max-width: 100%; padding: 0.4rem 0.5rem; font-size: 1rem; }
     button { margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
@@ -34,14 +37,9 @@ NUCLIO_DEPLOY_PAGE_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <nav>
-    <a href="/hub">統括</a>
-    <a href="/">CVAT export</a>
-    <a href="/fiftyone-upload">FiftyOne upload</a>
-    <a href="/train">YOLOX 学習</a>
-    <a href="/ppal-train">PPAL 学習</a>
-    <a href="/nuclio-deploy">Nuclio デプロイ</a>
-  </nav>
+"""
+    + webui_nav_html(active="deploy")
+    + """
   <h1>CVAT 自動アノテ用 Nuclio デプロイ</h1>
   <p class="muted">
     <code>work_dirs/web_train_*</code> を選び、<code>nuctl deploy</code> まで実行します。
@@ -262,3 +260,4 @@ NUCLIO_DEPLOY_PAGE_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+)

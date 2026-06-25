@@ -27,7 +27,12 @@ from webui.fiftyone_upload import (  # noqa: E402
     upload_root,
 )
 from webui.fiftyone_upload_page import fiftyone_upload_page_html  # noqa: E402
-from webui.hub_page import hub_page_html  # noqa: E402
+from webui.nav import BASE_STYLES, NAV_STYLES, webui_nav_html  # noqa: E402
+from webui.hub_page import (  # noqa: E402
+    hub_index_html,
+    hub_label_flow_html,
+    hub_ppal_flow_html,
+)
 from webui.nuclio_deploy import deploy_work_dir, list_deployable_work_dirs  # noqa: E402
 from webui.nuclio_deploy_page import NUCLIO_DEPLOY_PAGE_HTML  # noqa: E402
 from webui.train_manager import (  # noqa: E402
@@ -133,21 +138,35 @@ class PpalTrainStartRequest(BaseModel):
 
 @app.get("/hub", response_class=HTMLResponse)
 def hub() -> str:
+    return hub_index_html()
+
+
+@app.get("/hub/label", response_class=HTMLResponse)
+def hub_label_flow() -> str:
     cvat = os.environ.get("MMPLATFORM_CVAT_UI_URL", "http://localhost:8080").strip()
-    return hub_page_html(cvat)
+    return hub_label_flow_html(cvat)
+
+
+@app.get("/hub/ppal", response_class=HTMLResponse)
+def hub_ppal_flow() -> str:
+    cvat = os.environ.get("MMPLATFORM_CVAT_UI_URL", "http://localhost:8080").strip()
+    return hub_ppal_flow_html(cvat, fiftyone_app_url())
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return """<!DOCTYPE html>
+    return (
+        """<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CVAT export</title>
   <style>
-    :root { font-family: system-ui, sans-serif; }
-    body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+"""
+        + BASE_STYLES
+        + NAV_STYLES
+        + """
     label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
     input { width: 100%; max-width: 12rem; padding: 0.4rem 0.5rem; font-size: 1rem; }
     button { margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
@@ -159,7 +178,9 @@ def index() -> str:
   </style>
 </head>
 <body>
-  <nav style="margin-bottom:1rem;font-size:0.95rem"><a href="/hub">統括</a> &middot; <a href="/">CVAT export</a> &middot; <a href="/fiftyone-upload">FiftyOne upload</a> &middot; <a href="/train">YOLOX 学習</a> &middot; <a href="/ppal-train">PPAL 学習</a> &middot; <a href="/nuclio-deploy">Nuclio デプロイ</a></nav>
+"""
+        + webui_nav_html(active="export")
+        + """
   <h1>CVAT COCO export</h1>
   <p class="muted">ZIP は <code>data/exports/task_{task-id}_{YYYY_MMDD_HHMM}.zip</code> を自動で使います。</p>
   <form id="f">
@@ -219,6 +240,7 @@ def index() -> str:
 </body>
 </html>
 """
+    )
 
 
 @app.get("/api/preview-out")
