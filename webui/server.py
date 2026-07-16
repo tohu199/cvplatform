@@ -37,13 +37,15 @@ from webui.nuclio_deploy import deploy_work_dir, list_deployable_work_dirs  # no
 from webui.nuclio_deploy_page import NUCLIO_DEPLOY_PAGE_HTML  # noqa: E402
 from webui.train_manager import (  # noqa: E402
     DEFAULT_CHART_METRICS,
+    DEFAULT_SEMI_CHART_METRICS,
     WEB_TRAIN_PREFIX,
     default_work_dir_basename,
-    DEFAULT_CONFIG_REL,
     list_export_datasets,
     list_mmdet_configs,
     list_pretrained_work_dirs,
+    list_unlabeled_pools_for_train,
     suggest_categories_for_request,
+    train_defaults,
     train_manager,
 )
 from webui.ppal_train_manager import (  # noqa: E402
@@ -56,8 +58,14 @@ from webui.ppal_train_manager import (  # noqa: E402
 )
 from webui.ppal_train_page import PPAL_TRAIN_PAGE_HTML  # noqa: E402
 from webui.train_page import TRAIN_PAGE_HTML  # noqa: E402
+from webui.unlabeled_upload import (  # noqa: E402
+    list_unlabeled_pools,
+    unlabeled_root,
+    upload_unlabeled_pool,
+)
+from webui.unlabeled_upload_page import unlabeled_upload_page_html  # noqa: E402
 
-app = FastAPI(title="mmplatform webui", version="0.4.0")
+app = FastAPI(title="mmplatform webui", version="0.4.1")
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -99,6 +107,22 @@ class TrainStartRequest(BaseModel):
     classes: Optional[List[str]] = Field(
         default=None,
         description="学習するカテゴリ名。未指定時は train/val データから検出した全カテゴリ",
+    )
+    unlabeled_sources: Optional[List[TrainDataSourceItem]] = Field(
+        default=None,
+        description="半教師あり学習用の未教示データ（data/unlabeled プール）",
+    )
+    max_iters: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10_000_000,
+        description="半教師あり（Soft-Teacher）向け max_iters。未指定時は既定値",
+    )
+    val_interval: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10_000_000,
+        description="検証間隔。教師あり=epoch、半教師あり=iter",
     )
 
 
@@ -279,6 +303,47 @@ def fiftyone_upload_page() -> str:
     )
 
 
+@app.get("/unlabeled-upload", response_class=HTMLResponse)
+def unlabeled_upload_page() -> str:
+    return unlabeled_upload_page_html(upload_root=str(unlabeled_root()))
+
+
+@app.get("/api/unlabeled/pools")
+def api_unlabeled_pools() -> dict:
+    return {"pools": list_unlabeled_pools()}
+
+
+@app.post("/api/unlabeled/upload")
+async def api_unlabeled_upload(
+    pool_name: str = Form(...),
+    tags: str = Form(""),
+    files: List[UploadFile] = File(...),
+) -> dict:
+    if not files:
+        raise HTTPException(status_code=400, detail="no files provided")
+
+    tag_list = [part.strip() for part in tags.split(",") if part.strip()]
+    payloads: List[tuple[str, bytes]] = []
+    for upload in files:
+        content = await upload.read()
+        name = upload.filename or "upload"
+        payloads.append((name, content))
+
+    def _job():
+        return upload_unlabeled_pool(pool_name, payloads, tags=tag_list)
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(_executor, _job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"{exc!s}\n{tb}") from exc
+
+
 @app.get("/api/fiftyone/datasets")
 def api_fiftyone_datasets() -> dict:
     try:
@@ -357,10 +422,22 @@ def api_train_datasets() -> dict:
 
 @app.get("/api/train/configs")
 def api_train_configs() -> dict:
+    defaults = train_defaults()
     return {
         "configs": list_mmdet_configs(),
-        "default_config": DEFAULT_CONFIG_REL,
+        "default_config": defaults["default_config"],
+        "default_semi_config": defaults["default_semi_config"],
+        "default_semi_metrics": defaults["default_semi_metrics"],
+        "semi_max_iters": defaults["semi_max_iters"],
+        "semi_lr": defaults["semi_lr"],
+        "semi_val_interval": defaults["semi_val_interval"],
+        "val_interval_epochs": defaults["val_interval_epochs"],
     }
+
+
+@app.get("/api/train/unlabeled-pools")
+def api_train_unlabeled_pools() -> dict:
+    return {"pools": list_unlabeled_pools_for_train()}
 
 
 @app.get("/api/train/pretrained-models")
@@ -418,6 +495,13 @@ def api_train_start(body: TrainStartRequest) -> dict:
             pretrained_work_dir=body.pretrained_work_dir,
             work_dir_name=body.work_dir_name,
             classes=body.classes,
+            unlabeled_sources=(
+                [s.model_dump() for s in body.unlabeled_sources]
+                if body.unlabeled_sources
+                else None
+            ),
+            max_iters=body.max_iters,
+            val_interval=body.val_interval,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

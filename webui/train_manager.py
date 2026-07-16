@@ -25,12 +25,29 @@ from webui.nuclio_deploy import (
     resolve_work_dir,
 )
 from webui.coco_categories import suggest_categories, validate_selected_classes
-from webui.coco_merge import prepare_val_evaluator_ann_file
+from webui.coco_merge import (
+    build_categories_for_class_names,
+    prepare_unlabeled_ann_files,
+    prepare_val_evaluator_ann_file,
+)
+from webui.unlabeled_upload import list_unlabeled_pools, unlabeled_root
 from webui.work_dir_summary import find_scalars_json
 EXPORTS_DIR = ROOT / "data" / "exports"
 MMDET_ROOT = ROOT / "third_party" / "mmdetection"
 DEFAULT_CONFIG_REL = "configs/yolox/yolox_s_finetune.py"
+DEFAULT_SEMI_CONFIG_REL = "configs/soft_teacher/soft-teacher_faster-rcnn_finetune.py"
 DEFAULT_CONFIG = MMDET_ROOT / DEFAULT_CONFIG_REL.replace("/", os.sep)
+
+SEMI_MODEL_TYPES = frozenset({"SoftTeacher", "SemiBaseDetector"})
+
+# 半教師あり（Soft-Teacher）向け UI 既定値
+DEFAULT_SEMI_MAX_ITERS = 10000
+DEFAULT_SEMI_LR = 0.001
+DEFAULT_SEMI_BATCH_SIZE = 5
+DEFAULT_SEMI_VAL_INTERVAL = 2000
+
+# 教師あり向け UI 既定値（yolox_s_finetune.py の interval=5 に合わせる）
+DEFAULT_VAL_INTERVAL_EPOCHS = 5
 
 EPOCH_TRAIN_RE = re.compile(
     r"Epoch\(train\)\s+\[(\d+)\]\[\s*(\d+)/(\d+)\]"
@@ -40,6 +57,18 @@ WEB_TRAIN_PREFIX = "web_train_"
 
 # チャート初期表示（フロントと揃える）
 DEFAULT_CHART_METRICS = ["loss", "memory", "coco/bbox_mAP"]
+DEFAULT_SEMI_CHART_METRICS = [
+    "loss",
+    "memory",
+    "student/coco/bbox_mAP",
+    "teacher/coco/bbox_mAP",
+]
+
+_VAL_MAP_MARKERS = (
+    "coco/bbox_mAP",
+    "student/coco/bbox_mAP",
+    "teacher/coco/bbox_mAP",
+)
 
 
 def export_stamp() -> str:
@@ -113,6 +142,73 @@ def list_pretrained_work_dirs() -> List[Dict[str, Any]]:
     return rows
 
 
+def is_semi_config_rel(config_rel: str) -> bool:
+    norm = config_rel.replace("\\", "/")
+    return "/soft_teacher/" in f"/{norm}/"
+
+
+def train_defaults() -> Dict[str, Any]:
+    return {
+        "default_config": DEFAULT_CONFIG_REL,
+        "default_semi_config": DEFAULT_SEMI_CONFIG_REL,
+        "default_semi_metrics": list(DEFAULT_SEMI_CHART_METRICS),
+        "semi_max_iters": DEFAULT_SEMI_MAX_ITERS,
+        "semi_lr": DEFAULT_SEMI_LR,
+        "semi_batch_size": DEFAULT_SEMI_BATCH_SIZE,
+        "semi_val_interval": DEFAULT_SEMI_VAL_INTERVAL,
+        "val_interval_epochs": DEFAULT_VAL_INTERVAL_EPOCHS,
+    }
+
+
+def _is_val_map_line(obj: Dict[str, Any]) -> bool:
+    return any(k in obj for k in _VAL_MAP_MARKERS)
+
+
+def _load_work_dir_semi_flag(work_dir: Optional[str]) -> bool:
+    if not work_dir:
+        return False
+    spec_path = Path(work_dir) / "webui_train_spec.json"
+    if not spec_path.is_file():
+        return False
+    try:
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(spec.get("semi"))
+
+
+def resolve_default_chart_metrics(
+    work_dir: Optional[str] = None,
+    available_metrics: Optional[Sequence[str]] = None,
+) -> List[str]:
+    semi = _load_work_dir_semi_flag(work_dir)
+    if not semi and available_metrics:
+        semi = any(
+            m.startswith("student/") or m.startswith("teacher/")
+            for m in available_metrics
+        )
+    return list(DEFAULT_SEMI_CHART_METRICS if semi else DEFAULT_CHART_METRICS)
+
+
+def _resolve_val_interval(
+    val_interval: Optional[int],
+    *,
+    limit: int,
+    default: int,
+    label: str,
+) -> int:
+    value = default if val_interval is None else int(val_interval)
+    if value < 1:
+        raise ValueError(f"{label} は 1 以上にしてください。")
+    if value > limit:
+        raise ValueError(f"{label} は {limit} 以下にしてください。")
+    return value
+
+
+def list_unlabeled_pools_for_train() -> List[Dict[str, Any]]:
+    return list_unlabeled_pools()
+
+
 def resolve_mmdet_config_path(config_path: Optional[str]) -> Path:
     """third_party/mmdetection 配下の config パスを解決する。"""
     raw = (config_path or "").strip() or DEFAULT_CONFIG_REL
@@ -151,6 +247,8 @@ def list_mmdet_configs() -> List[Dict[str, Any]]:
                 "label": label,
                 "group": group,
                 "is_default": rel == DEFAULT_CONFIG_REL,
+                "is_semi": is_semi_config_rel(rel),
+                "is_semi_default": rel == DEFAULT_SEMI_CONFIG_REL,
             }
         )
     rows.sort(key=lambda r: (not r["is_default"], r["group"], r["label"]))
@@ -216,8 +314,16 @@ def _metric_sort_key(name: str) -> tuple:
         return (1, name)
     if name == "memory":
         return (2, name)
-    if name.startswith("coco/bbox_mAP"):
+    if name == "student/coco/bbox_mAP":
         return (3, name)
+    if name == "teacher/coco/bbox_mAP":
+        return (4, name)
+    if name.startswith("student/coco/bbox_mAP"):
+        return (5, name)
+    if name.startswith("teacher/coco/bbox_mAP"):
+        return (6, name)
+    if name.startswith("coco/bbox_mAP"):
+        return (7, name)
     return (9, name)
 
 
@@ -228,6 +334,8 @@ def _parse_scalars_json(path: Path) -> tuple:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}, []
+    last_train_step = 0.0
+    val_event_idx = 0
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -235,6 +343,8 @@ def _parse_scalars_json(path: Path) -> tuple:
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
             continue
         step = obj.get("step")
         if step is None:
@@ -245,6 +355,16 @@ def _parse_scalars_json(path: Path) -> tuple:
             continue
         if not math.isfinite(step_f):
             continue
+        is_val = _is_val_map_line(obj) and "loss" not in obj
+        if "loss" in obj and not is_val:
+            last_train_step = step_f
+        effective_step = step_f
+        if is_val and step_f == 0:
+            if last_train_step > 0:
+                effective_step = last_train_step
+            else:
+                val_event_idx += 1
+                effective_step = float(val_event_idx)
         for k, v in obj.items():
             if k == "step":
                 continue
@@ -254,7 +374,7 @@ def _parse_scalars_json(path: Path) -> tuple:
             if not math.isfinite(fv):
                 continue
             keys_seen.add(k)
-            series.setdefault(k, []).append({"step": step_f, "value": fv})
+            series.setdefault(k, []).append({"step": effective_step, "value": fv})
     available = sorted(keys_seen, key=_metric_sort_key)
     return series, available
 
@@ -307,7 +427,9 @@ class TrainJob:
             "metric_series": metric_series,
             "available_metrics": available_metrics,
             "scalars_path": scalars_path,
-            "default_metrics": list(DEFAULT_CHART_METRICS),
+            "default_metrics": resolve_default_chart_metrics(
+                wd, available_metrics
+            ),
         }
 
 
@@ -327,6 +449,38 @@ def _normalize_ann_relpath(data_root: Path, ann: str) -> str:
     if (data_root / under_ann).is_file():
         return under_ann
     return rel
+
+
+def _resolve_unlabeled_sources(
+    items: Sequence[Dict[str, str]],
+) -> List[TrainDataSource]:
+    if not items:
+        raise ValueError("Unlabeled データを 1 件以上選択してください。")
+    root = unlabeled_root().resolve()
+    resolved: List[TrainDataSource] = []
+    for i, raw in enumerate(items):
+        rel_root = (raw.get("data_root_rel") or "").strip()
+        ann = (raw.get("ann_file") or "annotations/instances_unlabeled.json").strip()
+        prefix = (raw.get("img_prefix") or "images/").strip()
+        if not rel_root:
+            raise ValueError(f"unlabeled[{i}]: data_root_rel が必要です。")
+        data_root = (ROOT / rel_root).resolve()
+        if not _is_under(data_root, root):
+            raise ValueError(
+                f"unlabeled[{i}]: data_root は data/unlabeled 配下のみ選択できます。"
+            )
+        ann_n = _normalize_ann_relpath(data_root, ann)
+        ann_path = data_root / ann_n
+        if not ann_path.is_file():
+            raise ValueError(f"unlabeled[{i}]: アノテーションが見つかりません: {ann}")
+        resolved.append(
+            {
+                "data_root": str(data_root),
+                "ann_file": ann_n,
+                "img_prefix": prefix,
+            }
+        )
+    return resolved
 
 
 def _resolve_data_sources(
@@ -394,6 +548,9 @@ class TrainJobManager:
         pretrained_work_dir: Optional[str] = None,
         work_dir_name: Optional[str] = None,
         classes: Optional[Sequence[str]] = None,
+        unlabeled_sources: Optional[Sequence[Dict[str, str]]] = None,
+        max_iters: Optional[int] = None,
+        val_interval: Optional[int] = None,
     ) -> TrainJob:
         with self._lock:
             if self._job is not None and self._job.status == "running":
@@ -403,9 +560,46 @@ class TrainJobManager:
         val_resolved = _resolve_data_sources(val_sources, label="val データ")
 
         cfg_path = resolve_mmdet_config_path(config_path)
+        cfg_rel = cfg_path.relative_to(MMDET_ROOT.resolve()).as_posix()
+        semi = is_semi_config_rel(cfg_rel)
+
+        unlabeled_resolved: List[TrainDataSource] = []
+        if semi:
+            if not unlabeled_sources:
+                raise ValueError(
+                    "半教師あり config では Unlabeled データを 1 件以上選択してください。"
+                )
+            unlabeled_resolved = _resolve_unlabeled_sources(unlabeled_sources)
+
+        if semi and batch_size < 2:
+            raise ValueError(
+                "半教師あり（Soft-Teacher）では batch_size を 2 以上にしてください。"
+                " 推奨は 5（labeled:unlabeled = 1:4）です。"
+            )
+
+        if semi:
+            resolved_max_iters = int(max_iters or DEFAULT_SEMI_MAX_ITERS)
+            resolved_val_interval = _resolve_val_interval(
+                val_interval,
+                limit=resolved_max_iters,
+                default=DEFAULT_SEMI_VAL_INTERVAL,
+                label="val_interval (iter)",
+            )
+        else:
+            resolved_val_interval = _resolve_val_interval(
+                val_interval,
+                limit=max_epochs,
+                default=DEFAULT_VAL_INTERVAL_EPOCHS,
+                label="val_interval (epoch)",
+            )
 
         pretrained_checkpoint: Optional[str] = None
         if pretrained_work_dir and pretrained_work_dir.strip():
+            if semi:
+                raise ValueError(
+                    "半教師あり（Soft-Teacher）では work_dirs からの事前学習重みは未対応です。"
+                    " config の COCO 事前学習 backbone を使用します。"
+                )
             wd_src = resolve_work_dir(pretrained_work_dir.strip())
             ckpt_path, _ = _resolve_checkpoint_path(wd_src)
             pretrained_checkpoint = str(ckpt_path)
@@ -424,6 +618,16 @@ class TrainJobManager:
             val_resolved, work_dir, selected_classes
         )
 
+        categories = build_categories_for_class_names(
+            Path(train_resolved[0]["data_root"]) / train_resolved[0]["ann_file"],
+            selected_classes,
+        )
+        unlabeled_prepared: List[Dict[str, str]] = []
+        if semi:
+            unlabeled_prepared = prepare_unlabeled_ann_files(
+                unlabeled_resolved, work_dir, categories
+            )
+
         spec = {
             "config_path": str(cfg_path),
             "train_sources": train_resolved,
@@ -434,7 +638,12 @@ class TrainJobManager:
             "lr": lr,
             "batch_size": batch_size,
             "work_dir": str(work_dir),
+            "semi": semi,
+            "val_interval": resolved_val_interval,
         }
+        if semi:
+            spec["unlabeled_sources"] = unlabeled_prepared
+            spec["max_iters"] = resolved_max_iters
         if pretrained_checkpoint:
             spec["pretrained_checkpoint"] = pretrained_checkpoint
             spec["pretrained_work_dir"] = pretrained_work_dir.strip()

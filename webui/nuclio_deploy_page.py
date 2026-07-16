@@ -93,7 +93,11 @@ NUCLIO_DEPLOY_PAGE_HTML = (
       const m = row.summary && row.summary.metrics && row.summary.metrics.final_val;
       const t = row.summary && row.summary.metrics && row.summary.metrics.final_train;
       let s = row.id;
-      if (m && m['coco/bbox_mAP'] != null) s += '  |  mAP ' + fmtNum(m['coco/bbox_mAP'], 3);
+      if (m) {
+        if (m['student/coco/bbox_mAP'] != null) s += '  |  student mAP ' + fmtNum(m['student/coco/bbox_mAP'], 3);
+        if (m['teacher/coco/bbox_mAP'] != null) s += '  |  teacher mAP ' + fmtNum(m['teacher/coco/bbox_mAP'], 3);
+        if (m['coco/bbox_mAP'] != null) s += '  |  mAP ' + fmtNum(m['coco/bbox_mAP'], 3);
+      }
       if (t && t.loss != null) s += '  |  loss ' + fmtNum(t.loss, 3);
       return s;
     }
@@ -149,9 +153,17 @@ NUCLIO_DEPLOY_PAGE_HTML = (
       const spec = s.train_spec;
       const metrics = s.metrics;
       const m = metrics && metrics.final_val;
-      const headline = m && m['coco/bbox_mAP'] != null
-        ? '<p><span class="badge">coco/bbox_mAP ' + fmtNum(m['coco/bbox_mAP'], 3) + '</span></p>'
-        : '<p><span class="badge badge-warn">検証 mAP 未取得</span></p>';
+      let headline = '<p><span class="badge badge-warn">検証 mAP 未取得</span></p>';
+      if (m) {
+        if (m['student/coco/bbox_mAP'] != null || m['teacher/coco/bbox_mAP'] != null) {
+          const parts = [];
+          if (m['student/coco/bbox_mAP'] != null) parts.push('student mAP ' + fmtNum(m['student/coco/bbox_mAP'], 3));
+          if (m['teacher/coco/bbox_mAP'] != null) parts.push('teacher mAP ' + fmtNum(m['teacher/coco/bbox_mAP'], 3));
+          headline = '<p>' + parts.map(p => '<span class="badge">' + p + '</span>').join(' ') + '</p>';
+        } else if (m['coco/bbox_mAP'] != null) {
+          headline = '<p><span class="badge">coco/bbox_mAP ' + fmtNum(m['coco/bbox_mAP'], 3) + '</span></p>';
+        }
+      }
 
       let html = headline;
       html += '<p class="muted">ckpt: <code>' + row.checkpoint + '</code>  |  nuclio: <code>' + row.nuclio_function + '</code>';
@@ -163,8 +175,8 @@ NUCLIO_DEPLOY_PAGE_HTML = (
       }
       const trainKeys = ['epoch', 'iter', 'step', 'loss', 'loss_cls', 'loss_bbox', 'loss_obj', 'loss_l1', 'lr'];
       const trainLabels = ['epoch', 'iter', 'step', 'loss', 'loss_cls', 'loss_bbox', 'loss_obj', 'loss_l1', 'lr'];
-      const valKeys = ['step', 'coco/bbox_mAP', 'coco/bbox_mAP_50', 'coco/bbox_mAP_75', 'coco/bbox_mAP_s', 'coco/bbox_mAP_m', 'coco/bbox_mAP_l'];
-      const valLabels = ['step', 'mAP', 'mAP@50', 'mAP@75', 'mAP (s)', 'mAP (m)', 'mAP (l)'];
+      const valKeys = ['step', 'student/coco/bbox_mAP', 'student/coco/bbox_mAP_50', 'student/coco/bbox_mAP_75', 'teacher/coco/bbox_mAP', 'teacher/coco/bbox_mAP_50', 'teacher/coco/bbox_mAP_75', 'coco/bbox_mAP', 'coco/bbox_mAP_50', 'coco/bbox_mAP_75', 'coco/bbox_mAP_s', 'coco/bbox_mAP_m', 'coco/bbox_mAP_l'];
+      const valLabels = ['step', 'student mAP', 'student mAP@50', 'student mAP@75', 'teacher mAP', 'teacher mAP@50', 'teacher mAP@75', 'mAP', 'mAP@50', 'mAP@75', 'mAP (s)', 'mAP (m)', 'mAP (l)'];
       if (metrics && metrics.final_train) {
         html += renderMetricGrid('最終 train（scalars.json 末尾付近）', metrics.final_train, trainKeys, trainLabels);
       }

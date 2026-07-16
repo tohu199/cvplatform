@@ -35,6 +35,24 @@ VAL_METRIC_KEYS = (
     "coco/bbox_mAP_s",
     "coco/bbox_mAP_m",
     "coco/bbox_mAP_l",
+    "student/coco/bbox_mAP",
+    "student/coco/bbox_mAP_50",
+    "student/coco/bbox_mAP_75",
+    "student/coco/bbox_mAP_s",
+    "student/coco/bbox_mAP_m",
+    "student/coco/bbox_mAP_l",
+    "teacher/coco/bbox_mAP",
+    "teacher/coco/bbox_mAP_50",
+    "teacher/coco/bbox_mAP_75",
+    "teacher/coco/bbox_mAP_s",
+    "teacher/coco/bbox_mAP_m",
+    "teacher/coco/bbox_mAP_l",
+)
+
+_VAL_MAP_MARKERS = (
+    "coco/bbox_mAP",
+    "student/coco/bbox_mAP",
+    "teacher/coco/bbox_mAP",
 )
 
 
@@ -88,7 +106,7 @@ def summarize_scalars(path: Path) -> Dict[str, Any]:
             continue
         if not isinstance(obj, dict):
             continue
-        if "coco/bbox_mAP" in obj:
+        if any(k in obj for k in _VAL_MAP_MARKERS):
             last_val = obj
         if "loss" in obj:
             last_train = obj

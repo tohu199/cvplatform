@@ -35,6 +35,7 @@ _NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("/train", "mmdet 学習", "train"),
     ("/ppal-train", "PPAL 学習", "ppal_train"),
     ("/fiftyone-upload", "FiftyOne 画像アップロード", "fiftyone_upload"),
+    ("/unlabeled-upload", "未教示アップロード", "unlabeled_upload"),
     ("/nuclio-deploy", "モデルデプロイ", "deploy"),
 )
 

@@ -64,6 +64,58 @@ def filter_coco_by_class_names(
     return out
 
 
+def build_categories_for_class_names(
+    ann_path: Path,
+    class_names: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """Pick COCO category dicts from *ann_path* matching *class_names* (order preserved)."""
+    raw = json.loads(ann_path.read_text(encoding="utf-8"))
+    by_name = {
+        str(c.get("name")): c for c in raw.get("categories") or [] if c.get("name")
+    }
+    out: List[Dict[str, Any]] = []
+    for name in class_names:
+        if name not in by_name:
+            raise ValueError(
+                f"カテゴリ {name!r} がアノテーションにありません: {ann_path}"
+            )
+        out.append(dict(by_name[name]))
+    return out
+
+
+def prepare_unlabeled_ann_files(
+    sources: Sequence[Dict[str, str]],
+    work_dir: Path,
+    categories: Sequence[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """Inject *categories* into unlabeled COCO JSON copies under work_dir."""
+    if not sources:
+        raise ValueError("unlabeled データがありません。")
+    ann_dir = work_dir / "unlabeled_ann"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    prepared: List[Dict[str, str]] = []
+    cats = [dict(c) for c in categories]
+    for index, src in enumerate(sources):
+        data_root = Path(src["data_root"])
+        ann_rel = src["ann_file"]
+        ann_path = data_root / ann_rel
+        if not ann_path.is_file():
+            raise ValueError(f"unlabeled アノテーションが見つかりません: {ann_path}")
+        raw = json.loads(ann_path.read_text(encoding="utf-8"))
+        raw["categories"] = cats
+        raw["annotations"] = []
+        out_path = ann_dir / f"pool_{index}.json"
+        out_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        prepared.append(
+            {
+                "data_root": str(data_root),
+                "ann_file": str(out_path.resolve()),
+                "img_prefix": src["img_prefix"],
+            }
+        )
+    return prepared
+
+
 def write_merged_val_annotations(
     items: Sequence[Tuple[Path, str]],
     out_path: Path,

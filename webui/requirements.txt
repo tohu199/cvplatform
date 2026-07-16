@@ -4,3 +4,4 @@ python-multipart>=0.0.9,<1
 cvat-sdk
 PyYAML
 fiftyone
+Pillow>=10.3.0

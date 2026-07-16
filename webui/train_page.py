@@ -8,7 +8,7 @@ TRAIN_PAGE_HTML = (
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>YOLOX 学習</title>
+  <title>MMDetection 学習</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
 """
@@ -47,8 +47,14 @@ TRAIN_PAGE_HTML = (
 """
     + webui_nav_html(active="train")
     + """
-  <h1>YOLOX-S ファインチューン</h1>
-  <p class="muted">メトリックは <code>work_dirs/.../vis_data/scalars.json</code> から読み取ります（学習開始後しばらくでファイルが現れます）。</p>
+  <h1>MMDetection 学習</h1>
+  <p class="muted">教師あり（YOLOX 等）と半教師あり（Soft-Teacher）に対応。メトリックは <code>work_dirs/.../vis_data/scalars.json</code> から読み取ります。</p>
+
+  <label for="training_mode">学習方式</label>
+  <select id="training_mode">
+    <option value="supervised">教師あり（supervised）</option>
+    <option value="semi">半教師あり（Soft-Teacher）</option>
+  </select>
 
   <label for="work_dir_suffix">出力 work_dir 名</label>
   <div class="work-dir-name-row">
@@ -59,12 +65,20 @@ TRAIN_PAGE_HTML = (
 
   <label for="config_path">MMDetection config</label>
   <select id="config_path"></select>
-  <p class="muted">既定は <code>configs/yolox/yolox_s_finetune.py</code>（CVAT エクスポート向け）。他モデルはデータセット構造が異なる場合があります。</p>
+  <p id="config_help" class="muted">既定は <code>configs/yolox/yolox_s_finetune.py</code>（CVAT エクスポート向け）。</p>
 
   <section class="data-panel">
-    <h2>Train データ</h2>
+    <h2 id="train_panel_title">Train データ（Labeled）</h2>
     <p class="muted">Ctrl / Cmd + クリックで複数選択。別のエクスポートフォルダも混在できます。</p>
     <select id="train_sources" class="source-select" multiple aria-label="Train データ"></select>
+  </section>
+
+  <section class="data-panel" id="unlabeled_panel" style="display:none">
+    <h2>Unlabeled データ</h2>
+    <p class="muted">
+      <a href="/unlabeled-upload">未教示アップロード</a> で登録したプールから選択（1 件以上必須）。
+    </p>
+    <select id="unlabeled_sources" class="source-select" multiple aria-label="Unlabeled データ"></select>
   </section>
 
   <section class="data-panel">
@@ -81,13 +95,21 @@ TRAIN_PAGE_HTML = (
 
   <label for="pretrained">事前学習重み（work_dirs）</label>
   <select id="pretrained"></select>
-  <p class="muted">未選択時は config の COCO 事前学習 URL を使用します。選択時は <code>last_checkpoint</code> の .pth を <code>model.init_cfg.checkpoint</code> に設定します。</p>
+  <p id="pretrained_help" class="muted">未選択時は config の COCO 事前学習 URL を使用します。選択時は <code>last_checkpoint</code> の .pth を <code>model.init_cfg.checkpoint</code> に設定します。</p>
 
-  <div class="row">
+  <div class="row" id="epochs_row">
     <div><label for="max_epochs">max_epochs</label><input id="max_epochs" type="number" min="1" value="50" /></div>
+    <div><label for="val_interval_epochs">val_interval (epoch)</label><input id="val_interval_epochs" type="number" min="1" value="5" /></div>
     <div><label for="lr">学習率 (lr)</label><input id="lr" type="number" step="any" value="0.001" /></div>
     <div><label for="batch_size">batch_size</label><input id="batch_size" type="number" min="1" value="4" /></div>
   </div>
+  <div class="row" id="iters_row" style="display:none">
+    <div><label for="max_iters">max_iters</label><input id="max_iters" type="number" min="1" value="10000" /></div>
+    <div><label for="val_interval_iters">val_interval (iter)</label><input id="val_interval_iters" type="number" min="1" value="2000" /></div>
+    <div><label for="lr_semi">学習率 (lr)</label><input id="lr_semi" type="number" step="any" value="0.001" /></div>
+    <div><label for="batch_size_semi">batch_size</label><input id="batch_size_semi" type="number" min="2" value="5" /></div>
+  </div>
+  <p id="semi_batch_help" class="muted" style="display:none">半教師ありは batch_size 5 推奨（labeled 1 + unlabeled 4）。2 以上なら [1, batch-1] に自動調整します。</p>
 
   <div>
     <button type="button" id="btnStart">学習開始</button>
@@ -98,7 +120,7 @@ TRAIN_PAGE_HTML = (
   <div id="scalarpath" class="muted"></div>
 
   <h2>メトリック（折れ線）</h2>
-  <p class="muted">初期表示: <strong>loss</strong> / <strong>memory</strong> / <strong>coco/bbox_mAP</strong> のみ。下のチェックで loss_* ・ memory ・ lr ・ time ・ coco/bbox_mAP_* などを追加できます。</p>
+  <p class="muted">初期表示: <strong>loss</strong> / <strong>memory</strong> / <strong>mAP</strong>（教師あり: coco/bbox_mAP、半教師あり: student/teacher mAP）。下のチェックで loss_* ・ memory ・ lr ・ time ・ mAP 詳細などを追加できます。</p>
   <div id="metricChecks"></div>
 
   <h3>loss 系（loss, loss_cls, …）</h3>
@@ -114,13 +136,77 @@ TRAIN_PAGE_HTML = (
   <script>
     const STORAGE_KEY = 'mmplatform_train_selected_metrics';
     let datasets = [];
+    let unlabeledPools = [];
     let lastState = {};
     let defaultMetrics = ['loss', 'memory', 'coco/bbox_mAP'];
+    let defaultSemiMetrics = ['loss', 'memory', 'student/coco/bbox_mAP', 'teacher/coco/bbox_mAP'];
+    let defaultConfigId = 'configs/yolox/yolox_s_finetune.py';
+    let defaultSemiConfigId = 'configs/soft_teacher/soft-teacher_faster-rcnn_finetune.py';
+    let semiDefaults = { max_iters: 10000, lr: 0.001, batch_size: 5, val_interval: 2000 };
+    let supervisedDefaults = { val_interval_epochs: 5 };
     const chartRefs = { loss: null, map: null, sys: null };
     let prevAvailKey = '';
     let prevWorkDirForCharts = undefined;
     let suggestedCategoryNames = [];
     let categoryFetchTimer = null;
+
+    function metricsForMode() {
+      return isSemiMode() ? defaultSemiMetrics : defaultMetrics;
+    }
+
+    function isSemiMode() {
+      return document.getElementById('training_mode').value === 'semi';
+    }
+
+    function buildUnlabeledOptions(pools) {
+      return (pools || []).map(row => ({
+        value: JSON.stringify({
+          data_root_rel: row.data_root_rel,
+          ann_file: row.ann_file,
+          img_prefix: row.img_prefix,
+        }),
+        label: row.id + '  |  ' + row.image_count + ' images' + (row.tags && row.tags.length ? '  |  ' + row.tags.join(', ') : ''),
+      }));
+    }
+
+    function fillUnlabeledSelect() {
+      const el = document.getElementById('unlabeled_sources');
+      const opts = buildUnlabeledOptions(unlabeledPools);
+      el.innerHTML = '';
+      if (!opts.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.textContent = '（未教示プールがありません — /unlabeled-upload で登録）';
+        el.appendChild(opt);
+        return;
+      }
+      for (const o of opts) {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        el.appendChild(opt);
+      }
+    }
+
+    function applyTrainingModeUI() {
+      const semi = isSemiMode();
+      document.getElementById('unlabeled_panel').style.display = semi ? '' : 'none';
+      document.getElementById('epochs_row').style.display = semi ? 'none' : '';
+      document.getElementById('iters_row').style.display = semi ? '' : 'none';
+      document.getElementById('semi_batch_help').style.display = semi ? '' : 'none';
+      document.getElementById('train_panel_title').textContent = semi ? 'Labeled データ（Train）' : 'Train データ';
+      document.getElementById('pretrained').disabled = semi;
+      document.getElementById('pretrained_help').textContent = semi
+        ? '半教師あり（Soft-Teacher）では config の Detectron2 ResNet-50 事前学習 backbone を使用します（work_dirs からの読み込みは未対応）。'
+        : '未選択時は config の COCO 事前学習 URL を使用します。選択時は last_checkpoint の .pth を model.init_cfg.checkpoint に設定します。';
+      document.getElementById('config_help').textContent = semi
+        ? '半教師あり既定: configs/soft_teacher/soft-teacher_faster-rcnn_finetune.py'
+        : '教師あり既定: configs/yolox/yolox_s_finetune.py（CVAT エクスポート向け）。';
+      const cfgSel = document.getElementById('config_path');
+      cfgSel.value = semi ? defaultSemiConfigId : defaultConfigId;
+      prevAvailKey = '';
+    }
 
     function buildSourceOptions(dsList) {
       const opts = [];
@@ -251,8 +337,6 @@ TRAIN_PAGE_HTML = (
       } catch (e) {}
     }
 
-    let defaultConfigId = 'configs/yolox/yolox_s_finetune.py';
-
     async function loadMmdetConfigs() {
       const sel = document.getElementById('config_path');
       sel.innerHTML = '';
@@ -261,6 +345,22 @@ TRAIN_PAGE_HTML = (
         const j = await r.json();
         const rows = j.configs || [];
         if (j.default_config) defaultConfigId = j.default_config;
+        if (j.default_semi_config) defaultSemiConfigId = j.default_semi_config;
+        if (Array.isArray(j.default_semi_metrics) && j.default_semi_metrics.length) {
+          defaultSemiMetrics = j.default_semi_metrics;
+        }
+        semiDefaults = {
+          max_iters: j.semi_max_iters || 10000,
+          lr: j.semi_lr || 0.001,
+          batch_size: j.semi_batch_size || 5,
+          val_interval: j.semi_val_interval || 2000,
+        };
+        supervisedDefaults.val_interval_epochs = j.val_interval_epochs || 5;
+        document.getElementById('max_iters').value = semiDefaults.max_iters;
+        document.getElementById('lr_semi').value = semiDefaults.lr;
+        document.getElementById('batch_size_semi').value = semiDefaults.batch_size;
+        document.getElementById('val_interval_iters').value = semiDefaults.val_interval;
+        document.getElementById('val_interval_epochs').value = supervisedDefaults.val_interval_epochs;
         if (!rows.length) {
           const opt = document.createElement('option');
           opt.value = defaultConfigId;
@@ -291,13 +391,24 @@ TRAIN_PAGE_HTML = (
           }
           sel.appendChild(og);
         }
-        sel.value = defaultConfigId;
+        sel.value = isSemiMode() ? defaultSemiConfigId : defaultConfigId;
       } catch (e) {
         const opt = document.createElement('option');
         opt.value = defaultConfigId;
         opt.textContent = defaultConfigId + ' (default)';
         sel.appendChild(opt);
       }
+    }
+
+    async function loadUnlabeledPools() {
+      try {
+        const r = await fetch('/api/train/unlabeled-pools');
+        const j = await r.json();
+        unlabeledPools = j.pools || [];
+      } catch (e) {
+        unlabeledPools = [];
+      }
+      fillUnlabeledSelect();
     }
 
     async function loadPretrainedModels() {
@@ -445,7 +556,7 @@ TRAIN_PAGE_HTML = (
       const fromSaved = Array.isArray(saved) ? saved.filter(m => available.includes(m)) : [];
       let selected = new Set(fromSaved);
       if (selected.size === 0) {
-        defaultMetrics.forEach(m => { if (available.includes(m)) selected.add(m); });
+        metricsForMode().forEach(m => { if (available.includes(m)) selected.add(m); });
       }
       box.innerHTML = '';
       for (const m of available) {
@@ -471,7 +582,10 @@ TRAIN_PAGE_HTML = (
       const r = await fetch('/api/train/state');
       const j = await r.json();
       lastState = j;
-      if (Array.isArray(j.default_metrics) && j.default_metrics.length) defaultMetrics = j.default_metrics;
+      if (Array.isArray(j.default_metrics) && j.default_metrics.length) {
+        if (isSemiMode()) defaultSemiMetrics = j.default_metrics;
+        else defaultMetrics = j.default_metrics;
+      }
       const st = j.status || 'idle';
       document.getElementById('status').textContent = '状態: ' + st;
       document.getElementById('status').className = 'status ' + (st === 'failed' ? 'err' : (st === 'completed' ? 'ok' : ''));
@@ -494,22 +608,39 @@ TRAIN_PAGE_HTML = (
     document.getElementById('train_sources').addEventListener('change', scheduleCategoryRefresh);
     document.getElementById('val_sources').addEventListener('change', scheduleCategoryRefresh);
 
+    document.getElementById('training_mode').addEventListener('change', applyTrainingModeUI);
+
     document.getElementById('btnStart').addEventListener('click', async () => {
+      const semi = isSemiMode();
       const train_sources = getSelectedSources('train_sources');
       const val_sources = getSelectedSources('val_sources');
-      if (!train_sources.length) { alert('Train データを 1 件以上選択してください'); return; }
+      if (!train_sources.length) { alert('Train / Labeled データを 1 件以上選択してください'); return; }
       if (!val_sources.length) { alert('Val データを 1 件以上選択してください'); return; }
+      const unlabeled_sources = semi ? getSelectedSources('unlabeled_sources') : [];
+      if (semi && !unlabeled_sources.length) {
+        alert('半教師あり学習では Unlabeled データを 1 件以上選択してください');
+        return;
+      }
       const cfgSel = document.getElementById('config_path').value;
       const body = {
         train_sources: train_sources,
         val_sources: val_sources,
         max_epochs: parseInt(document.getElementById('max_epochs').value, 10),
-        lr: parseFloat(document.getElementById('lr').value),
-        batch_size: parseInt(document.getElementById('batch_size').value, 10),
+        lr: semi ? parseFloat(document.getElementById('lr_semi').value) : parseFloat(document.getElementById('lr').value),
+        batch_size: semi ? parseInt(document.getElementById('batch_size_semi').value, 10) : parseInt(document.getElementById('batch_size').value, 10),
       };
+      if (semi) {
+        body.max_iters = parseInt(document.getElementById('max_iters').value, 10);
+        body.val_interval = parseInt(document.getElementById('val_interval_iters').value, 10);
+        body.unlabeled_sources = unlabeled_sources;
+      } else {
+        body.val_interval = parseInt(document.getElementById('val_interval_epochs').value, 10);
+      }
       if (cfgSel) body.config_path = cfgSel;
       const pw = document.getElementById('pretrained').value;
-      if (pw) body.pretrained_work_dir = pw;
+      if (pw && !semi) body.pretrained_work_dir = pw;
+      const selectedCats = getSelectedCategories();
+      if (selectedCats.length) body.classes = selectedCats;
       const wdn = document.getElementById('work_dir_suffix').value.trim();
       if (wdn) body.work_dir_name = wdn;
       const r = await fetch('/api/train/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -527,7 +658,17 @@ TRAIN_PAGE_HTML = (
       poll();
     });
 
-    Promise.all([loadDatasets(), loadMmdetConfigs(), loadPretrainedModels(), loadDefaultWorkDirName()]).then(() => { poll(); setInterval(poll, 1200); });
+    Promise.all([
+      loadDatasets(),
+      loadUnlabeledPools(),
+      loadMmdetConfigs(),
+      loadPretrainedModels(),
+      loadDefaultWorkDirName(),
+    ]).then(() => {
+      applyTrainingModeUI();
+      poll();
+      setInterval(poll, 1200);
+    });
   </script>
 </body>
 </html>
